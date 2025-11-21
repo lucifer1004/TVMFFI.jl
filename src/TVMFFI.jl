@@ -58,6 +58,7 @@ export get_global_func, register_global_func
 export register_object, get_type_index
 export to_julia_array, from_julia_array
 export cpu, cuda, opencl, vulkan, metal, rocm
+export tvm_ffi_version
 
 # Export high-level module API
 export load_module, get_function
@@ -87,6 +88,28 @@ function __init__()
     _init_function_api()
     # Initialize object API (type registry)
     _init_object_api()
+end
+
+"""
+    tvm_ffi_version() -> VersionNumber
+
+Get the TVM FFI version as a Julia `VersionNumber`.
+
+This function queries the C API for version information and converts it
+to Julia's standard version type for easy comparison and display.
+
+# Examples
+```julia
+julia> v = tvm_ffi_version()
+v"0.1.2"
+
+julia> v >= v"0.1.0"
+true
+```
+"""
+function tvm_ffi_version()
+    ver = LibTVMFFI.TVMFFIGetVersion()
+    return VersionNumber(ver.major, ver.minor, ver.patch)
 end
 
 end # module

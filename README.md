@@ -49,6 +49,10 @@ julia --project=. -e 'using Pkg; Pkg.instantiate()'
 ```julia
 using TVMFFI
 
+# Check TVM FFI version
+v = tvm_ffi_version()
+println("TVM FFI Version: $v")  # e.g., "0.1.2"
+
 # Create devices
 cpu_dev = cpu(0)
 cuda_dev = cuda(0)
@@ -135,8 +139,10 @@ using Pkg
 Pkg.test("TVMFFI")
 ```
 
-Current test coverage: **78 tests** across:
-- Device creation
+Current test coverage: **84 tests** across:
+- Version API (6 tests)
+- Device creation (5 tests)
+- Data type handling (8 tests)
 - Data type handling  
 - String/Bytes operations
 - Error handling

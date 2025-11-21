@@ -3,6 +3,19 @@ using TVMFFI
 using TVMFFI.LibTVMFFI  # Import for internal constants
 
 @testset "TVMFFI.jl Tests" begin
+    @testset "Version API" begin
+        # Test tvm_ffi_version()
+        v = tvm_ffi_version()
+        @test v isa VersionNumber
+        @test v.major == 0
+        @test v.minor == 1
+        @test v.patch >= 2  # At least 0.1.2
+        
+        # Test version comparisons
+        @test v >= v"0.1.0"
+        @test v < v"1.0.0"
+    end
+
     @testset "Device Creation" begin
         # Test CPU device
         dev = cpu(0)
