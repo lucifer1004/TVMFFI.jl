@@ -444,22 +444,34 @@ function from_tvm_any(any::LibTVMFFI.TVMFFIAny; borrowed::Bool = false)
         # Practical choice: Always copy. Safe and simple. Performance is acceptable
         # for typical callback data sizes.
         tensor_ptr = reinterpret(Ptr{DLTensor}, any.data)
-        if tensor_ptr == C_NULL
-            error("NULL DLTensor pointer in from_tvm_any")
-        end
+        tensor_ptr == C_NULL && error("NULL DLTensor pointer in from_tvm_any")
+        
+        # SAFETY: Read DLTensor metadata (no pointers escaped yet)
         dltensor = unsafe_load(tensor_ptr)
         
-        # Copy data (MUST copy - pointer is temporary)
+        # Extract shape
         ndim = Int(dltensor.ndim)
-        shape_vec = unsafe_wrap(Array, dltensor.shape, ndim) |> copy
-        shape_tuple = Tuple(shape_vec)
+        shape = unsafe_wrap(Array, dltensor.shape, ndim) |> copy
         
-        # Determine element type using helper function
+        # Determine element type and create result array
         T = dtype_to_julia_type(dltensor.dtype)
+        result = Array{T}(undef, shape...)
         
+        # Get strides in ELEMENTS (DLPack standard: strides are in elements, not bytes)
+        strides_elem = if dltensor.strides == C_NULL
+            # NULL strides → C-contiguous (row-major)
+            # DLPack v1.2+ requires explicit strides, but older versions allow NULL
+            _compute_c_strides(shape)
+        else
+            # strides are already in element units per DLPack spec
+            unsafe_wrap(Array, dltensor.strides, ndim) |> copy
+        end
+        
+        # Copy data with correct stride calculation
         data_ptr = Ptr{T}(dltensor.data)
-        temp_arr = unsafe_wrap(Array, data_ptr, shape_tuple)
-        return copy(temp_arr)
+        _copy_strided!(result, data_ptr, shape, strides_elem)
+        
+        return result
     elseif type_idx == Int32(LibTVMFFI.kTVMFFISmallStr) ||
            type_idx == Int32(LibTVMFFI.kTVMFFIStr)
         return String(TVMString(any; borrowed = borrowed))
@@ -573,6 +585,56 @@ function (func::TVMFunction)(args...)
     end
 
     return julia_result
+end
+
+# ============================================================================
+# Private Helper Functions for DLTensor Conversion
+# ============================================================================
+
+"""
+    _compute_c_strides(shape::Vector{Int64}) -> Vector{Int}
+
+Compute C-contiguous strides (row-major layout) for a given shape.
+Returns strides in units of elements, not bytes.
+
+Example: shape = [2, 3, 4] → strides = [12, 4, 1]
+"""
+function _compute_c_strides(shape::Vector{Int64})
+    ndim = length(shape)
+    strides = Vector{Int}(undef, ndim)
+    stride = 1
+    for i in ndim:-1:1
+        strides[i] = stride
+        stride *= shape[i]
+    end
+    return strides
+end
+
+"""
+    _copy_strided!(dst::Array{T}, src::Ptr{T}, shape::Vector{Int64}, strides::Vector{Int}) where T
+
+Copy data from a strided source pointer to a destination array.
+
+Args:
+- dst: Destination Julia array (must have same shape)
+- src: Source data pointer
+- shape: Dimensions of the data
+- strides: Strides in units of elements (NOT bytes)
+
+This function correctly handles any stride pattern, including non-contiguous layouts.
+"""
+function _copy_strided!(dst::Array{T}, src::Ptr{T}, 
+                        shape::Vector{Int64}, strides::Vector{Int}) where T
+    # Use CartesianIndices for clean multi-dimensional iteration
+    for idx in CartesianIndices(Tuple(shape))
+        # Compute source offset using strides (element-based indexing)
+        offset = 0
+        for (dim, coord) in enumerate(Tuple(idx))
+            offset += (coord - 1) * strides[dim]  # Julia is 1-indexed
+        end
+        # Load from source (offset+1 because unsafe_load is 1-indexed)
+        dst[idx] = unsafe_load(src, offset + 1)
+    end
 end
 
 function Base.show(io::IO, func::TVMFunction)

@@ -250,6 +250,53 @@ using TVMFFI.LibTVMFFI  # Import for internal constants
         @test func === nothing
     end
 
+    @testset "DLTensor Stride Handling in Callbacks" begin
+        # Test array callback with different stride patterns
+        
+        # Helper to register and test a callback
+        function test_array_callback(arr, expected_result)
+            callback_called = Ref(false)
+            result_ref = Ref{Any}(nothing)
+            
+            function array_processor(x::AbstractArray)
+                callback_called[] = true
+                result_ref[] = copy(x)
+                return x
+            end
+            
+            register_global_func("julia.test.array_proc", array_processor; override=true)
+            func = get_global_func("julia.test.array_proc")
+            
+            returned = func(arr)
+            
+            @test callback_called[]
+            @test result_ref[] ≈ expected_result
+            @test returned ≈ expected_result
+        end
+        
+        # Test 1: Contiguous array (NULL strides equivalent)
+        contiguous_arr = Float32[1, 2, 3, 4, 5]
+        test_array_callback(contiguous_arr, contiguous_arr)
+        
+        # Test 2: Contiguous slice
+        vec = Float32[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        contiguous_slice = @view vec[3:7]
+        test_array_callback(contiguous_slice, collect(contiguous_slice))
+        
+        # Test 3: Column slice (contiguous in column-major)
+        matrix = Float32[1 2 3; 4 5 6; 7 8 9]
+        col_slice = @view matrix[:, 2]
+        test_array_callback(col_slice, collect(col_slice))
+        
+        # Test 4: Row slice (non-contiguous in column-major) 
+        row_slice = @view matrix[2, :]
+        test_array_callback(row_slice, collect(row_slice))
+        
+        # Test 5: 2D array
+        matrix_2d = Float64[1.0 2.0; 3.0 4.0]
+        test_array_callback(matrix_2d, matrix_2d)
+    end
+
     @testset "Function Registration" begin
         # Test basic function registration
         function test_add(x::Int64, y::Int64)

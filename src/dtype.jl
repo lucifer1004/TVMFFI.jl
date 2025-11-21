@@ -180,6 +180,10 @@ function DLDataType(::Type{UInt64})
     DLDataType(UInt8(LibTVMFFI.kDLUInt), UInt8(64), UInt16(1))
 end
 
+function DLDataType(::Type{Float16})
+    DLDataType(UInt8(LibTVMFFI.kDLFloat), UInt8(16), UInt16(1))
+end
+
 function DLDataType(::Type{Float32})
     DLDataType(UInt8(LibTVMFFI.kDLFloat), UInt8(32), UInt16(1))
 end

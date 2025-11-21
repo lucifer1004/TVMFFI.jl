@@ -81,10 +81,10 @@ println("\n  ✓ All results correct")
 println("\n5. Testing with array parameters...")
 
 # Define function that takes array and returns array
-function apply_sigmoid_elementwise(x::Vector{Float64})
-    println("  Julia received array of length $(length(x))")
+function apply_sigmoid_elementwise(x::AbstractArray{Float64})
+    println("  Julia received array of size $(size(x))")
     # Apply sigmoid to each element
-    return [sigmoid_custom(xi) for xi in x]
+    return sigmoid_custom.(x)
 end
 
 register_global_func("julia.ops.sigmoid_array", apply_sigmoid_elementwise)
@@ -93,7 +93,13 @@ println("  ✓ Registered sigmoid_array (takes Vector{Float64})")
 
 # Test it
 array_func = get_global_func("julia.ops.sigmoid_array")
-test_input = [1.0, 2.0, 3.0, 4.0, 5.0]
+a = [
+  1.0 2.0 3.0
+  4.0 5.0 6.0
+  7.0 8.0 9.0
+  10.0 11.0 12.0
+]
+test_input = view(a, 1:2:4, 1:2:3)
 println("\n  Input: ", test_input)
 
 test_output = array_func(test_input)
@@ -101,6 +107,7 @@ println("  Output: ", round.(test_output, digits=4))
 
 # Verify correctness
 expected = [sigmoid_custom(x) for x in test_input]
+println("  Expected: ", round.(expected, digits=4))
 if test_output ≈ expected
     println("  ✓ Array processing works correctly!")
 else
