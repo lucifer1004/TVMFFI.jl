@@ -148,6 +148,17 @@ const kTVMFFIDynObjectBegin = Int32(128)     # Dynamic types start here
 const TVMFFIObjectHandle = Ptr{Cvoid}
 
 """
+    TVMFFIVersion
+
+TVM FFI version information.
+"""
+struct TVMFFIVersion
+    major::UInt32
+    minor::UInt32
+    patch::UInt32
+end
+
+"""
     TVMFFIObject
 
 Object header for all heap-allocated TVM FFI objects.
@@ -184,6 +195,16 @@ struct TVMFFIByteArray
 end
 
 """
+    TVMFFIShapeCell
+
+Shape cell used in shape object following header.
+"""
+struct TVMFFIShapeCell
+    data::Ptr{Int64}
+    size::UInt
+end
+
+"""
     TVMFFIErrorCell
 
 Error cell structure following the object header in error objects.
@@ -206,6 +227,15 @@ struct TVMFFIFunctionCell
 end
 
 """
+    TVMFFIOpaqueObjectCell
+
+Opaque object cell for storing external handles (e.g., Python PyObject*).
+"""
+struct TVMFFIOpaqueObjectCell
+    handle::Ptr{Cvoid}
+end
+
+"""
     TVMFFITypeInfo
 
 Runtime type information for object type checking.
@@ -225,6 +255,26 @@ struct TVMFFITypeInfo
 end
 
 # Section: Core C API functions
+# Organized to match c_api.h structure
+
+#------------------------------------------------------------
+# Section: Version API
+#------------------------------------------------------------
+
+"""
+    TVMFFIGetVersion() -> TVMFFIVersion
+
+Get the TVM FFI version from the current C ABI.
+"""
+function TVMFFIGetVersion()
+    version = Ref{TVMFFIVersion}()
+    @ccall libtvm_ffi.TVMFFIGetVersion(version::Ptr{TVMFFIVersion})::Cvoid
+    return version[]
+end
+
+#------------------------------------------------------------
+# Section: Basic object API
+#------------------------------------------------------------
 
 """
     TVMFFIObjectIncRef(obj::TVMFFIObjectHandle)
@@ -245,24 +295,100 @@ function TVMFFIObjectDecRef(obj::TVMFFIObjectHandle)
 end
 
 """
-    TVMFFIErrorCreate(kind, message, backtrace) -> (Int32, TVMFFIObjectHandle)
+    TVMFFIObjectCreateOpaque(handle, type_index, deleter) -> (Int32, TVMFFIObjectHandle)
 
-Create an error object.
-Returns (return_code, error_handle).
+Create an opaque object by passing in handle, type_index and deleter.
+Useful for wrapping external objects (e.g., Python PyObject*).
 """
-function TVMFFIErrorCreate(
-        kind::TVMFFIByteArray,
-        message::TVMFFIByteArray,
-        backtrace::TVMFFIByteArray
+function TVMFFIObjectCreateOpaque(
+        handle::Ptr{Cvoid},
+        type_index::Int32,
+        deleter::Ptr{Cvoid}
 )
     out_handle = Ref{TVMFFIObjectHandle}(C_NULL)
-    ret = @ccall libtvm_ffi.TVMFFIErrorCreate(
-        kind::Ref{TVMFFIByteArray},
-        message::Ref{TVMFFIByteArray},
-        backtrace::Ref{TVMFFIByteArray},
+    ret = @ccall libtvm_ffi.TVMFFIObjectCreateOpaque(
+        handle::Ptr{Cvoid},
+        type_index::Int32,
+        deleter::Ptr{Cvoid},
         out_handle::Ptr{TVMFFIObjectHandle}
     )::Cint
     return ret, out_handle[]
+end
+
+"""
+    TVMFFITypeKeyToIndex(key) -> (Int32, Int32)
+
+Convert type key to type index.
+"""
+function TVMFFITypeKeyToIndex(key::TVMFFIByteArray)
+    out_index = Ref{Int32}(0)
+    ret = @ccall libtvm_ffi.TVMFFITypeKeyToIndex(
+        key::Ref{TVMFFIByteArray}, out_index::Ptr{Int32})::Cint
+    return ret, out_index[]
+end
+
+#-----------------------------------------------------------------------
+# Section: Basic function calling API for function implementation
+#-----------------------------------------------------------------------
+
+"""
+    TVMFFIFunctionCreate(resource_handle, safe_call, deleter) -> (Int32, TVMFFIObjectHandle)
+
+Create a FFI function from C callbacks.
+"""
+function TVMFFIFunctionCreate(
+        resource_handle::Ptr{Cvoid},
+        safe_call::Ptr{Cvoid},
+        deleter::Ptr{Cvoid}
+)
+    out_handle = Ref{TVMFFIObjectHandle}(C_NULL)
+    ret = @ccall libtvm_ffi.TVMFFIFunctionCreate(
+        resource_handle::Ptr{Cvoid},
+        safe_call::Ptr{Cvoid},
+        deleter::Ptr{Cvoid},
+        out_handle::Ptr{TVMFFIObjectHandle}
+    )::Cint
+    return ret, out_handle[]
+end
+
+"""
+    TVMFFIFunctionGetGlobal(name) -> (Int32, TVMFFIObjectHandle)
+
+Get a global function by name.
+"""
+function TVMFFIFunctionGetGlobal(name::TVMFFIByteArray)
+    out_handle = Ref{TVMFFIObjectHandle}(C_NULL)
+    ret = ccall((:TVMFFIFunctionGetGlobal, libtvm_ffi), Cint,
+                (Ref{TVMFFIByteArray}, Ptr{TVMFFIObjectHandle}),
+                Ref(name), out_handle)
+    return ret, out_handle[]
+end
+
+"""
+    TVMFFIAnyViewToOwnedAny(any_view) -> (Int32, TVMFFIAny)
+
+Convert an AnyView to an owned Any.
+"""
+function TVMFFIAnyViewToOwnedAny(any_view::TVMFFIAny)
+    out_any = Ref{TVMFFIAny}(TVMFFIAny(Int32(kTVMFFINone), 0, 0))
+    ret = @ccall libtvm_ffi.TVMFFIAnyViewToOwnedAny(
+        any_view::Ref{TVMFFIAny}, out_any::Ptr{TVMFFIAny})::Cint
+    return ret, out_any[]
+end
+
+"""
+    TVMFFIFunctionCall(func, args, num_args, result)
+
+Call a TVM function with arguments.
+"""
+function TVMFFIFunctionCall(
+        func::TVMFFIObjectHandle,
+        args::Ptr{TVMFFIAny},
+        num_args::Int32,
+        result::Ptr{TVMFFIAny}
+)
+    @ccall libtvm_ffi.TVMFFIFunctionCall(func::TVMFFIObjectHandle, args::Ptr{TVMFFIAny},
+        num_args::Int32, result::Ptr{TVMFFIAny})::Cint
 end
 
 """
@@ -286,80 +412,38 @@ function TVMFFIErrorSetRaised(error::TVMFFIObjectHandle)
 end
 
 """
-    TVMFFIFunctionCall(func, args, num_args, result)
+    TVMFFIErrorSetRaisedFromCStr(kind, message)
 
-Call a TVM function with arguments.
+Set a raised error in TLS from C strings (convenient method).
 """
-function TVMFFIFunctionCall(
-        func::TVMFFIObjectHandle,
-        args::Ptr{TVMFFIAny},
-        num_args::Int32,
-        result::Ptr{TVMFFIAny}
-)
-    @ccall libtvm_ffi.TVMFFIFunctionCall(func::TVMFFIObjectHandle, args::Ptr{TVMFFIAny},
-        num_args::Int32, result::Ptr{TVMFFIAny})::Cint
+function TVMFFIErrorSetRaisedFromCStr(kind::Cstring, message::Cstring)
+    @ccall libtvm_ffi.TVMFFIErrorSetRaisedFromCStr(kind::Cstring, message::Cstring)::Cvoid
 end
 
 """
-    TVMFFIFunctionGetGlobal(name) -> (Int32, TVMFFIObjectHandle)
+    TVMFFIErrorCreate(kind, message, backtrace) -> (Int32, TVMFFIObjectHandle)
 
-Get a global function by name.
+Create an error object.
+Returns (return_code, error_handle).
 """
-function TVMFFIFunctionGetGlobal(name::TVMFFIByteArray)
-    out_handle = Ref{TVMFFIObjectHandle}(C_NULL)
-    ret = ccall((:TVMFFIFunctionGetGlobal, libtvm_ffi), Cint,
-                (Ref{TVMFFIByteArray}, Ptr{TVMFFIObjectHandle}),
-                Ref(name), out_handle)
-    return ret, out_handle[]
-end
-"""
-    TVMFFIFunctionSetGlobal(name, func, override) -> Int32
-
-Register a global function.
-"""
-function TVMFFIFunctionSetGlobal(
-        name::TVMFFIByteArray,
-        func::TVMFFIObjectHandle,
-        override::Int32
-)
-    @ccall libtvm_ffi.TVMFFIFunctionSetGlobal(
-        name::Ref{TVMFFIByteArray},
-        func::TVMFFIObjectHandle,
-        override::Cint
-    )::Cint
-end
-
-"""
-    TVMFFIFunctionCreate(resource_handle, safe_call, deleter) -> (Int32, TVMFFIObjectHandle)
-
-Create a function object from a resource handle and callbacks.
-"""
-function TVMFFIFunctionCreate(
-        resource_handle::Ptr{Cvoid},
-        safe_call::Ptr{Cvoid},
-        deleter::Ptr{Cvoid}
+function TVMFFIErrorCreate(
+        kind::TVMFFIByteArray,
+        message::TVMFFIByteArray,
+        backtrace::TVMFFIByteArray
 )
     out_handle = Ref{TVMFFIObjectHandle}(C_NULL)
-    ret = @ccall libtvm_ffi.TVMFFIFunctionCreate(
-        resource_handle::Ptr{Cvoid},
-        safe_call::Ptr{Cvoid},
-        deleter::Ptr{Cvoid},
+    ret = @ccall libtvm_ffi.TVMFFIErrorCreate(
+        kind::Ref{TVMFFIByteArray},
+        message::Ref{TVMFFIByteArray},
+        backtrace::Ref{TVMFFIByteArray},
         out_handle::Ptr{TVMFFIObjectHandle}
     )::Cint
     return ret, out_handle[]
 end
 
-"""
-    TVMFFITypeKeyToIndex(key) -> (Int32, Int32)
-
-Get type index from type key.
-"""
-function TVMFFITypeKeyToIndex(key::TVMFFIByteArray)
-    out_index = Ref{Int32}(0)
-    ret = @ccall libtvm_ffi.TVMFFITypeKeyToIndex(
-        key::Ref{TVMFFIByteArray}, out_index::Ptr{Int32})::Cint
-    return ret, out_index[]
-end
+#------------------------------------------------------------
+# Section: string/bytes support APIs
+#------------------------------------------------------------
 
 """
     TVMFFITypeGetOrAllocIndex(key, static_type_index, type_depth, num_child_slots, 
@@ -454,7 +538,30 @@ function TVMFFIBytesFromByteArray(input::TVMFFIByteArray)
     return ret, out_any[]
 end
 
+#-----------------------------------------------------------------------
+# Section: Backend noexcept functions for internal use
+#-----------------------------------------------------------------------
+
+"""
+    TVMFFIFunctionSetGlobal(name, func, override) -> Int32
+
+Register a global function to runtime's global table.
+"""
+function TVMFFIFunctionSetGlobal(
+        name::TVMFFIByteArray,
+        func::TVMFFIObjectHandle,
+        override::Int32
+)
+    @ccall libtvm_ffi.TVMFFIFunctionSetGlobal(
+        name::Ref{TVMFFIByteArray},
+        func::TVMFFIObjectHandle,
+        override::Cint
+    )::Cint
+end
+
+#---------------------------------------------------------------
 # Section: Inline accessor functions (from C++ inline functions)
+#---------------------------------------------------------------
 
 """
     TVMFFIObjectGetTypeIndex(obj::TVMFFIObjectHandle) -> Int32
@@ -490,6 +597,45 @@ Get pointer to the function cell from a function object.
 """
 function TVMFFIFunctionGetCellPtr(obj::TVMFFIObjectHandle)
     Ptr{TVMFFIFunctionCell}(obj + sizeof(TVMFFIObject))
+end
+
+"""
+    TVMFFIOpaqueObjectGetCellPtr(obj::TVMFFIObjectHandle) -> Ptr{TVMFFIOpaqueObjectCell}
+
+Get pointer to the opaque object cell from an opaque object.
+"""
+function TVMFFIOpaqueObjectGetCellPtr(obj::TVMFFIObjectHandle)
+    Ptr{TVMFFIOpaqueObjectCell}(obj + sizeof(TVMFFIObject))
+end
+
+"""
+    TVMFFIShapeGetCellPtr(obj::TVMFFIObjectHandle) -> Ptr{TVMFFIShapeCell}
+
+Get pointer to the shape cell from a shape object.
+"""
+function TVMFFIShapeGetCellPtr(obj::TVMFFIObjectHandle)
+    Ptr{TVMFFIShapeCell}(obj + sizeof(TVMFFIObject))
+end
+
+"""
+    TVMFFISmallBytesGetContentByteArray(value::TVMFFIAny) -> TVMFFIByteArray
+
+Get the content of a small string/bytes in byte array format.
+"""
+function TVMFFISmallBytesGetContentByteArray(value::TVMFFIAny)
+    # Extract the v_bytes field and length from TVMFFIAny
+    # v_bytes is the 8-byte data field, small_str_len indicates the length
+    data_ptr = Base.unsafe_convert(Ptr{UInt8}, Ref(value, 3))  # Offset to data field
+    TVMFFIByteArray(data_ptr, value.small_str_len)
+end
+
+"""
+    TVMFFIDLDeviceFromIntPair(device_type::Int32, device_id::Int32) -> DLDevice
+
+Create a DLDevice from device type and device ID.
+"""
+function TVMFFIDLDeviceFromIntPair(device_type::Int32, device_id::Int32)
+    DLDevice(device_type, device_id)
 end
 
 end # module LibTVMFFI
