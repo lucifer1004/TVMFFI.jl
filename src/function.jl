@@ -61,7 +61,7 @@ function safe_call(
             arg_ptr = args + (i - 1) * sizeof(LibTVMFFI.TVMFFIAny)
             arg_any = unsafe_load(arg_ptr)
             # Borrowed reference from C callback
-            julia_args[i] = from_tvm_any(arg_any; borrowed=true)
+            julia_args[i] = from_tvm_any(arg_any; borrowed = true)
         end
 
         # Call function
@@ -71,7 +71,7 @@ function safe_call(
         # NOTE: For arrays, we need to keep the holder alive!
         # Store it in a temporary registry that's cleared after C returns
         result_holder = nothing
-        
+
         ret_any = if result isa AbstractArray && !(result isa DLTensorHolder)
             # Create holder and keep it alive
             result_holder = from_julia_array(result)
@@ -79,7 +79,7 @@ function safe_call(
         else
             to_tvm_any(result)
         end
-        
+
         # Write result to ret pointer
         # CRITICAL: Must preserve result_holder during this store
         GC.@preserve result_holder begin
@@ -90,7 +90,7 @@ function safe_call(
     catch e
         # Handle exception
         msg = sprint(showerror, e, catch_backtrace())
-        
+
         # Create TVM error
         # CRITICAL: Must preserve strings during C API call to prevent GC
         kind_str = "RuntimeError"
@@ -103,9 +103,10 @@ function safe_call(
             )
             # No backtrace for now (empty byte array)
             bt_bytes = LibTVMFFI.TVMFFIByteArray(C_NULL, 0)
-            
-            err_ret, err_handle = LibTVMFFI.TVMFFIErrorCreate(kind_bytes, msg_bytes, bt_bytes)
-            
+
+            err_ret,
+            err_handle = LibTVMFFI.TVMFFIErrorCreate(kind_bytes, msg_bytes, bt_bytes)
+
             if err_ret == 0 && err_handle != C_NULL
                 # SetRaised only sets TLS, doesn't take ownership
                 # We created the error, so we own it and must DecRef
@@ -113,17 +114,16 @@ function safe_call(
                 LibTVMFFI.TVMFFIObjectDecRef(err_handle)
             end
         end
-        
+
         return -1
     end
 end
 
 function _init_function_api()
-    _safe_call_ptr[] = @cfunction(safe_call, Cint, (Ptr{Cvoid}, Ptr{LibTVMFFI.TVMFFIAny}, Cint, Ptr{LibTVMFFI.TVMFFIAny}))
+    _safe_call_ptr[] = @cfunction(safe_call, Cint,
+        (Ptr{Cvoid}, Ptr{LibTVMFFI.TVMFFIAny}, Cint, Ptr{LibTVMFFI.TVMFFIAny}))
     _deleter_ptr[] = @cfunction(callback_deleter, Cvoid, (Ptr{Cvoid},))
 end
-
-
 
 """
     TVMFunction
@@ -189,7 +189,7 @@ end
 """
 function get_global_func(name::AbstractString)
     name_str = String(name)
-    
+
     local ret, handle
     GC.@preserve name_str begin
         byte_array = LibTVMFFI.TVMFFIByteArray(
@@ -230,32 +230,33 @@ Register a Julia function as a global TVM function.
 function register_global_func(name::AbstractString, func::Function; override::Bool = false)
     # Create a reference to the function to keep it alive
     func_ref = Ref{Any}(func)
-    
+
     # Use the pointer to the Ref as the resource handle
     # This is unique and stable as long as the Ref is alive
     resource_handle = Base.unsafe_convert(Ptr{Cvoid}, func_ref)
-    
+
     # Register in global registry
     lock(_callback_lock) do
         _callback_registry[resource_handle] = func_ref
     end
-    
+
     # Create TVM function
-    ret, func_handle = LibTVMFFI.TVMFFIFunctionCreate(
+    ret,
+    func_handle = LibTVMFFI.TVMFFIFunctionCreate(
         resource_handle,
         _safe_call_ptr[],
         _deleter_ptr[]
     )
-    
+
     check_call(ret)
-    
+
     if func_handle == C_NULL
         error("Failed to create TVM function")
     end
-    
+
     # Register global
     name_str = String(name)
-    
+
     local ret
     GC.@preserve name_str begin
         name_bytes = LibTVMFFI.TVMFFIByteArray(
@@ -263,12 +264,12 @@ function register_global_func(name::AbstractString, func::Function; override::Bo
         )
         ret = LibTVMFFI.TVMFFIFunctionSetGlobal(name_bytes, func_handle, Int32(override))
     end
-    
+
     check_call(ret)
-    
+
     # We can DecRef the function handle now, as TVM global registry holds a reference
     LibTVMFFI.TVMFFIObjectDecRef(func_handle)
-    
+
     return nothing
 end
 
@@ -445,18 +446,18 @@ function from_tvm_any(any::LibTVMFFI.TVMFFIAny; borrowed::Bool = false)
         # for typical callback data sizes.
         tensor_ptr = reinterpret(Ptr{DLTensor}, any.data)
         tensor_ptr == C_NULL && error("NULL DLTensor pointer in from_tvm_any")
-        
+
         # SAFETY: Read DLTensor metadata (no pointers escaped yet)
         dltensor = unsafe_load(tensor_ptr)
-        
+
         # Extract shape
         ndim = Int(dltensor.ndim)
         shape = unsafe_wrap(Array, dltensor.shape, ndim) |> copy
-        
+
         # Determine element type and create result array
         T = dtype_to_julia_type(dltensor.dtype)
         result = Array{T}(undef, shape...)
-        
+
         # Get strides in ELEMENTS (DLPack standard: strides are in elements, not bytes)
         strides_elem = if dltensor.strides == C_NULL
             # NULL strides → C-contiguous (row-major)
@@ -466,11 +467,11 @@ function from_tvm_any(any::LibTVMFFI.TVMFFIAny; borrowed::Bool = false)
             # strides are already in element units per DLPack spec
             unsafe_wrap(Array, dltensor.strides, ndim) |> copy
         end
-        
+
         # Copy data with correct stride calculation
         data_ptr = Ptr{T}(dltensor.data)
         _copy_strided!(result, data_ptr, shape, strides_elem)
-        
+
         return result
     elseif type_idx == Int32(LibTVMFFI.kTVMFFISmallStr) ||
            type_idx == Int32(LibTVMFFI.kTVMFFIStr)
@@ -572,7 +573,7 @@ function (func::TVMFunction)(args...)
 
     # Convert result back to Julia type
     # Function return: C gives us ownership
-    julia_result = from_tvm_any(result[]; borrowed=false)
+    julia_result = from_tvm_any(result[]; borrowed = false)
 
     # Cleanup: decrease ref counts for object arguments we created
     for arg_any in args_array
@@ -623,8 +624,8 @@ Args:
 
 This function correctly handles any stride pattern, including non-contiguous layouts.
 """
-function _copy_strided!(dst::Array{T}, src::Ptr{T}, 
-                        shape::Vector{Int64}, strides::Vector{Int}) where T
+function _copy_strided!(dst::Array{T}, src::Ptr{T},
+        shape::Vector{Int64}, strides::Vector{Int}) where {T}
     # Use CartesianIndices for clean multi-dimensional iteration
     for idx in CartesianIndices(Tuple(shape))
         # Compute source offset using strides (element-based indexing)

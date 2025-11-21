@@ -138,7 +138,7 @@ function DLDataType(dtype_str::AbstractString)
         )
         ret, dtype = LibTVMFFI.TVMFFIDataTypeFromString(byte_array)
     end
-    
+
     check_call(ret)
     return dtype
 end

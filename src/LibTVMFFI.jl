@@ -359,8 +359,8 @@ Get a global function by name.
 function TVMFFIFunctionGetGlobal(name::TVMFFIByteArray)
     out_handle = Ref{TVMFFIObjectHandle}(C_NULL)
     ret = ccall((:TVMFFIFunctionGetGlobal, libtvm_ffi), Cint,
-                (Ref{TVMFFIByteArray}, Ptr{TVMFFIObjectHandle}),
-                Ref(name), out_handle)
+        (Ref{TVMFFIByteArray}, Ptr{TVMFFIObjectHandle}),
+        Ref(name), out_handle)
     return ret, out_handle[]
 end
 
@@ -461,15 +461,15 @@ Returns the type index directly (not an error code).
 - `parent_type_index`: Parent type index (use -1 for no parent)
 """
 function TVMFFITypeGetOrAllocIndex(
-    key::TVMFFIByteArray,
-    static_type_index::Int32 = Int32(-1),
-    type_depth::Int32 = Int32(0),
-    num_child_slots::Int32 = Int32(0),
-    child_slots_can_overflow::Int32 = Int32(0),
-    parent_type_index::Int32 = Int32(-1)
+        key::TVMFFIByteArray,
+        static_type_index::Int32 = Int32(-1),
+        type_depth::Int32 = Int32(0),
+        num_child_slots::Int32 = Int32(0),
+        child_slots_can_overflow::Int32 = Int32(0),
+        parent_type_index::Int32 = Int32(-1)
 )
     idx = @ccall libtvm_ffi.TVMFFITypeGetOrAllocIndex(
-        key::Ref{TVMFFIByteArray}, 
+        key::Ref{TVMFFIByteArray},
         static_type_index::Int32,
         type_depth::Int32,
         num_child_slots::Int32,

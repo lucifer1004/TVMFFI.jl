@@ -10,7 +10,7 @@ using TVMFFI.LibTVMFFI  # Import for internal constants
         @test v.major == 0
         @test v.minor == 1
         @test v.patch >= 2  # At least 0.1.2
-        
+
         # Test version comparisons
         @test v >= v"0.1.0"
         @test v < v"1.0.0"
@@ -50,7 +50,7 @@ using TVMFFI.LibTVMFFI  # Import for internal constants
         # Test string conversion
         @test string(dt_int32) == "int32"
         @test string(dt_float64) == "float64"
-        
+
         # Test dtype_to_julia_type conversion
         @test dtype_to_julia_type(DLDataType(Float16)) == Float16
         @test dtype_to_julia_type(DLDataType(Float32)) == Float32
@@ -154,91 +154,91 @@ using TVMFFI.LibTVMFFI  # Import for internal constants
 
     @testset "from_tvm_any Complete Coverage" begin
         # Test ALL branches of from_tvm_any with both borrowed=false and borrowed=true
-        
+
         # Type 0: None
         any_none = LibTVMFFI.TVMFFIAny(Int32(0), 0, 0)
-        @test TVMFFI.from_tvm_any(any_none; borrowed=true) === nothing
-        @test TVMFFI.from_tvm_any(any_none; borrowed=false) === nothing
-        
+        @test TVMFFI.from_tvm_any(any_none; borrowed = true) === nothing
+        @test TVMFFI.from_tvm_any(any_none; borrowed = false) === nothing
+
         # Type 1: Int
         any_int = LibTVMFFI.TVMFFIAny(Int32(1), 0, reinterpret(UInt64, Int64(123)))
-        @test TVMFFI.from_tvm_any(any_int; borrowed=true) == 123
-        @test TVMFFI.from_tvm_any(any_int; borrowed=false) == 123
-        
+        @test TVMFFI.from_tvm_any(any_int; borrowed = true) == 123
+        @test TVMFFI.from_tvm_any(any_int; borrowed = false) == 123
+
         # Type 2: Bool
         any_bool_t = LibTVMFFI.TVMFFIAny(Int32(2), 0, UInt64(1))
         any_bool_f = LibTVMFFI.TVMFFIAny(Int32(2), 0, UInt64(0))
-        @test TVMFFI.from_tvm_any(any_bool_t; borrowed=true) == true
-        @test TVMFFI.from_tvm_any(any_bool_f; borrowed=true) == false
-        
+        @test TVMFFI.from_tvm_any(any_bool_t; borrowed = true) == true
+        @test TVMFFI.from_tvm_any(any_bool_f; borrowed = true) == false
+
         # Type 3: Float
         any_float = LibTVMFFI.TVMFFIAny(Int32(3), 0, reinterpret(UInt64, 3.14))
-        @test TVMFFI.from_tvm_any(any_float; borrowed=true) ≈ 3.14
-        
+        @test TVMFFI.from_tvm_any(any_float; borrowed = true) ≈ 3.14
+
         # Type 5: DataType
         dt_packed = UInt64(LibTVMFFI.kDLFloat) | (UInt64(32) << 8) | (UInt64(1) << 16)
         any_dtype = LibTVMFFI.TVMFFIAny(Int32(5), 0, dt_packed)
-        result_dt = TVMFFI.from_tvm_any(any_dtype; borrowed=true)
+        result_dt = TVMFFI.from_tvm_any(any_dtype; borrowed = true)
         @test result_dt isa DLDataType
         @test result_dt.code == UInt8(LibTVMFFI.kDLFloat)
         @test result_dt.bits == 32
-        
+
         # Type 6: Device
         dev_packed = UInt64(1) | (UInt64(0) << 32)  # CPU:0
         any_device = LibTVMFFI.TVMFFIAny(Int32(6), 0, dev_packed)
-        result_dev = TVMFFI.from_tvm_any(any_device; borrowed=true)
+        result_dev = TVMFFI.from_tvm_any(any_device; borrowed = true)
         @test result_dev isa DLDevice
         @test result_dev.device_type == Int32(1)
         @test result_dev.device_id == Int32(0)
-        
+
         # Type 11: SmallStr
         small_str = TVMString("tiny")
         @test small_str.data.type_index == Int32(LibTVMFFI.kTVMFFISmallStr)
-        result = TVMFFI.from_tvm_any(small_str.data; borrowed=true)
+        result = TVMFFI.from_tvm_any(small_str.data; borrowed = true)
         @test result == "tiny"
-        
+
         # Type 12: SmallBytes
         small_bytes = TVMBytes(UInt8[1, 2, 3])
         if small_bytes.data.type_index == Int32(LibTVMFFI.kTVMFFISmallBytes)
-            result = TVMFFI.from_tvm_any(small_bytes.data; borrowed=true)
+            result = TVMFFI.from_tvm_any(small_bytes.data; borrowed = true)
             @test result == UInt8[1, 2, 3]
         end
-        
+
         # Type 65: Str (heap string)
         large_str = TVMString("this is a longer string that goes on heap")
         @test large_str.data.type_index == Int32(LibTVMFFI.kTVMFFIStr)
-        result = TVMFFI.from_tvm_any(large_str.data; borrowed=false)  # Test borrowed=false
+        result = TVMFFI.from_tvm_any(large_str.data; borrowed = false)  # Test borrowed=false
         @test result == "this is a longer string that goes on heap"
-        
+
         # Type 66: Bytes (heap bytes)
         large_bytes = TVMBytes(rand(UInt8, 100))
         @test large_bytes.data.type_index == Int32(LibTVMFFI.kTVMFFIBytes)
-        result = TVMFFI.from_tvm_any(large_bytes.data; borrowed=false)
+        result = TVMFFI.from_tvm_any(large_bytes.data; borrowed = false)
         @test length(result) == 100
-        
+
         # Type 68: Function
         test_func = (x, y) -> x + y
-        register_global_func("julia.type_test.add", test_func; override=true)
+        register_global_func("julia.type_test.add", test_func; override = true)
         func = get_global_func("julia.type_test.add")
         @test func isa TVMFunction
         # Test round-trip through from_tvm_any
         any_func = TVMFFI.to_tvm_any(func)
-        recovered = TVMFFI.from_tvm_any(any_func; borrowed=false)
+        recovered = TVMFFI.from_tvm_any(any_func; borrowed = false)
         @test recovered isa TVMFunction
-        
+
         # Type 73: Module
         mod = system_lib()
         @test mod isa TVMModule
         # Module wraps TVMObject, test the wrapper
         @test mod.handle isa TVMFFI.TVMObject
-        
+
         # Test invalid type indices (should error)
         any_raw_str = LibTVMFFI.TVMFFIAny(Int32(8), 0, 0)  # kTVMFFIRawStr
         @test_throws ErrorException TVMFFI.from_tvm_any(any_raw_str)
-        
+
         any_byte_arr_ptr = LibTVMFFI.TVMFFIAny(Int32(9), 0, 0)  # kTVMFFIByteArrayPtr
         @test_throws ErrorException TVMFFI.from_tvm_any(any_byte_arr_ptr)
-        
+
         any_rvalue = LibTVMFFI.TVMFFIAny(Int32(10), 0, 0)  # kTVMFFIObjectRValueRef
         @test_throws ErrorException TVMFFI.from_tvm_any(any_rvalue)
     end
@@ -252,46 +252,46 @@ using TVMFFI.LibTVMFFI  # Import for internal constants
 
     @testset "DLTensor Stride Handling in Callbacks" begin
         # Test array callback with different stride patterns
-        
+
         # Helper to register and test a callback
         function test_array_callback(arr, expected_result)
             callback_called = Ref(false)
             result_ref = Ref{Any}(nothing)
-            
+
             function array_processor(x::AbstractArray)
                 callback_called[] = true
                 result_ref[] = copy(x)
                 return x
             end
-            
-            register_global_func("julia.test.array_proc", array_processor; override=true)
+
+            register_global_func("julia.test.array_proc", array_processor; override = true)
             func = get_global_func("julia.test.array_proc")
-            
+
             returned = func(arr)
-            
+
             @test callback_called[]
             @test result_ref[] ≈ expected_result
             @test returned ≈ expected_result
         end
-        
+
         # Test 1: Contiguous array (NULL strides equivalent)
         contiguous_arr = Float32[1, 2, 3, 4, 5]
         test_array_callback(contiguous_arr, contiguous_arr)
-        
+
         # Test 2: Contiguous slice
         vec = Float32[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
         contiguous_slice = @view vec[3:7]
         test_array_callback(contiguous_slice, collect(contiguous_slice))
-        
+
         # Test 3: Column slice (contiguous in column-major)
         matrix = Float32[1 2 3; 4 5 6; 7 8 9]
         col_slice = @view matrix[:, 2]
         test_array_callback(col_slice, collect(col_slice))
-        
+
         # Test 4: Row slice (non-contiguous in column-major) 
         row_slice = @view matrix[2, :]
         test_array_callback(row_slice, collect(row_slice))
-        
+
         # Test 5: 2D array
         matrix_2d = Float64[1.0 2.0; 3.0 4.0]
         test_array_callback(matrix_2d, matrix_2d)
@@ -342,7 +342,7 @@ using TVMFFI.LibTVMFFI  # Import for internal constants
             return sum(args)
         end
 
-        register_global_func("julia.test.sum", test_sum; override=true)
+        register_global_func("julia.test.sum", test_sum; override = true)
         func5 = get_global_func("julia.test.sum")
         @test func5(Int64(1), Int64(2), Int64(3), Int64(4)) == 10
 
@@ -351,7 +351,7 @@ using TVMFFI.LibTVMFFI  # Import for internal constants
             error("Test error!")
         end
 
-        register_global_func("julia.test.error", test_error; override=true)
+        register_global_func("julia.test.error", test_error; override = true)
         func6 = get_global_func("julia.test.error")
         @test_throws TVMError func6()
     end
@@ -374,7 +374,7 @@ using TVMFFI.LibTVMFFI  # Import for internal constants
             y::Float64
         end
 
-        idx3 = register_object("julia.test.TestObject2", TestObject2; parent_type_index=Int32(64))
+        idx3 = register_object("julia.test.TestObject2", TestObject2; parent_type_index = Int32(64))
         @test idx3 > 0
         @test idx3 != idx
     end
@@ -494,12 +494,12 @@ using TVMFFI.LibTVMFFI  # Import for internal constants
         # Test system_lib
         mod = system_lib()
         @test mod isa TVMModule
-        
+
         # Test get_module_kind
         kind = get_module_kind(mod)
         @test kind isa String
         @test kind == "library"
-        
+
         # Test implements_function
         # System lib may or may not have functions, just test the API works
         result = implements_function(mod, "nonexistent_function_12345", false)
@@ -510,7 +510,7 @@ using TVMFFI.LibTVMFFI  # Import for internal constants
         # Verify struct sizes
         @test sizeof(DLDevice) == 8
         @test sizeof(DLDataType) == 4
-        
+
         # Verify field offsets for 64-bit platform
         if Sys.WORD_SIZE == 64
             @test fieldoffset(DLTensor, 1) == 0   # data
@@ -522,7 +522,7 @@ using TVMFFI.LibTVMFFI  # Import for internal constants
             @test fieldoffset(DLTensor, 7) == 40  # byte_offset
             @test sizeof(DLTensor) == 48
         end
-        
+
         # Test with actual tensor
         x = Float32[1, 2, 3, 4, 5]
         holder = from_julia_array(x)
@@ -533,7 +533,7 @@ using TVMFFI.LibTVMFFI  # Import for internal constants
 
     @testset "GC Safety Stress Test" begin
         # Test that references survive aggressive GC
-        
+
         # Test 1: String creation under GC pressure
         all_strings_valid = true
         for i in 1:100
@@ -548,18 +548,18 @@ using TVMFFI.LibTVMFFI  # Import for internal constants
             end
         end
         @test all_strings_valid
-        
+
         # Test 2: Function registration under GC
         all_funcs_work = true
         for i in 1:50
             func_name = "julia.gc_test_$i"
             test_func = x -> x + i
-            register_global_func(func_name, test_func; override=true)
-            
+            register_global_func(func_name, test_func; override = true)
+
             # Trigger GC
             _ = [rand(1000) for _ in 1:20]
             GC.gc()
-            
+
             # Retrieve and call
             retrieved = get_global_func(func_name)
             if retrieved === nothing || retrieved(Int64(10)) != 10 + i
@@ -568,7 +568,7 @@ using TVMFFI.LibTVMFFI  # Import for internal constants
             end
         end
         @test all_funcs_work
-        
+
         # Test 3: Object references under GC
         all_modules_valid = true
         for i in 1:50

@@ -32,7 +32,7 @@ mutable struct TVMString
 
     function TVMString(s::AbstractString)
         str = String(s)  # Convert to Julia String
-        
+
         local ret, any_result
         GC.@preserve str begin
             byte_array = LibTVMFFI.TVMFFIByteArray(
@@ -40,7 +40,7 @@ mutable struct TVMString
             )
             ret, any_result = LibTVMFFI.TVMFFIStringFromByteArray(byte_array)
         end
-        
+
         check_call(ret)
 
         tvmstr = new(any_result)
@@ -141,7 +141,7 @@ mutable struct TVMBytes
             )
             ret, any_result = LibTVMFFI.TVMFFIBytesFromByteArray(byte_array)
         end
-        
+
         check_call(ret)
 
         tvmbytes = new(any_result)

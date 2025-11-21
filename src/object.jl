@@ -118,12 +118,12 @@ function register_object(type_key::String, T::Type; parent_type_index::Int32 = I
             parent_type_index  # parent is ffi.Object by default
         )
     end
-    
+
     lock(_object_lock) do
         _type_key2index[type_key] = idx
         _type_index2type[idx] = T
     end
-    
+
     return idx
 end
 
@@ -138,7 +138,7 @@ function get_type_index(type_key::String)
             return _type_key2index[type_key]
         end
     end
-    
+
     # Not in cache, query C API
     local ret, idx
     GC.@preserve type_key begin
@@ -147,14 +147,14 @@ function get_type_index(type_key::String)
         )
         ret, idx = LibTVMFFI.TVMFFITypeKeyToIndex(key_bytes)
     end
-    
+
     if ret != 0
         error("Type key '$type_key' not found in TVM registry")
     end
-    
+
     lock(_object_lock) do
         _type_key2index[type_key] = idx
     end
-    
+
     return idx
 end

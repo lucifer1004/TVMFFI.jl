@@ -29,10 +29,10 @@ In practice, this could be a specialized function from a Julia package
 function sigmoid_custom(x::Float64)
     # Add some custom logic (e.g., clamping for numerical stability)
     x_clamped = clamp(x, -20.0, 20.0)
-    
+
     # Standard sigmoid
     result = 1.0 / (1.0 + exp(-x_clamped))
-    
+
     # Could add logging, validation, etc.
     return result
 end
@@ -67,9 +67,9 @@ println("  Results:")
 for x in test_values
     result = retrieved_func(x)
     expected = sigmoid_custom(x)
-    
+
     println("    sigmoid_custom($x) = $result")
-    
+
     if abs(result - expected) > 1e-10
         error("Result mismatch!")
     end
@@ -93,21 +93,19 @@ println("  ✓ Registered sigmoid_array (takes Vector{Float64})")
 
 # Test it
 array_func = get_global_func("julia.ops.sigmoid_array")
-a = [
-  1.0 2.0 3.0
-  4.0 5.0 6.0
-  7.0 8.0 9.0
-  10.0 11.0 12.0
-]
+a = [1.0 2.0 3.0
+     4.0 5.0 6.0
+     7.0 8.0 9.0
+     10.0 11.0 12.0]
 test_input = view(a, 1:2:4, 1:2:3)
 println("\n  Input: ", test_input)
 
 test_output = array_func(test_input)
-println("  Output: ", round.(test_output, digits=4))
+println("  Output: ", round.(test_output, digits = 4))
 
 # Verify correctness
 expected = [sigmoid_custom(x) for x in test_input]
-println("  Expected: ", round.(expected, digits=4))
+println("  Expected: ", round.(expected, digits = 4))
 if test_output ≈ expected
     println("  ✓ Array processing works correctly!")
 else
@@ -131,4 +129,3 @@ println("  • Use Optim.jl for optimization-based layers")
 println("  • Use any Julia package in your TVM workflow!")
 println()
 println("🎯 Key Benefit: Stay in Julia, leverage entire ecosystem!")
-

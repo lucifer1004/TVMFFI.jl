@@ -64,7 +64,7 @@ mutable struct TVMError <: Exception
         kind_str = kind.name  # Extract to local variable for GC.@preserve
         msg_str = string(message)
         bt_str = string(backtrace)
-        
+
         local ret, handle
         GC.@preserve kind_str msg_str bt_str begin
             kind_bytes = LibTVMFFI.TVMFFIByteArray(
@@ -79,7 +79,7 @@ mutable struct TVMError <: Exception
 
             ret, handle = LibTVMFFI.TVMFFIErrorCreate(kind_bytes, msg_bytes, bt_bytes)
         end
-        
+
         if ret != 0
             # Error creating error object - this is bad, but we can't recurse
             error("Failed to create TVM error object (out of memory?)")

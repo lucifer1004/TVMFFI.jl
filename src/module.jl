@@ -142,11 +142,11 @@ Rust equivalent: `SystemLib::new()`
 """
 function system_lib(symbol_prefix::AbstractString = "")
     system_lib_func = get_global_func("ffi.SystemLib")
-    
+
     if system_lib_func === nothing
         error("ffi.SystemLib not found - system library support unavailable")
     end
-    
+
     return system_lib_func(String(symbol_prefix))
 end
 
@@ -171,11 +171,11 @@ Python equivalent: `mod.save(file_name, fmt)`
 """
 function write_to_file(mod::TVMModule, file_name::AbstractString, format::AbstractString = "")
     write_func = get_global_func("ffi.ModuleWriteToFile")
-    
+
     if write_func === nothing
         error("ffi.ModuleWriteToFile not found - module writing unavailable")
     end
-    
+
     write_func(mod.handle, String(file_name), String(format))
     return nothing
 end
@@ -201,11 +201,11 @@ Python equivalent: `mod.get_source(fmt)`
 """
 function inspect_source(mod::TVMModule, format::AbstractString = "")
     inspect_func = get_global_func("ffi.ModuleInspectSource")
-    
+
     if inspect_func === nothing
         error("ffi.ModuleInspectSource not found - source inspection unavailable")
     end
-    
+
     result = inspect_func(mod.handle, String(format))
     return String(result)
 end
@@ -224,11 +224,11 @@ println("Module kind: ", kind)
 """
 function get_module_kind(mod::TVMModule)
     kind_func = get_global_func("ffi.ModuleGetKind")
-    
+
     if kind_func === nothing
         error("ffi.ModuleGetKind not found")
     end
-    
+
     result = kind_func(mod.handle)
     return String(result)
 end
@@ -248,11 +248,11 @@ end
 """
 function implements_function(mod::TVMModule, name::AbstractString, query_imports::Bool = true)
     impl_func = get_global_func("ffi.ModuleImplementsFunction")
-    
+
     if impl_func === nothing
         error("ffi.ModuleImplementsFunction not found")
     end
-    
+
     result = impl_func(mod.handle, String(name), query_imports)
     return Bool(result)
 end

@@ -79,43 +79,63 @@ end
 
 Detect GPU backend and device ID from a GPU array.
 
-Uses type-based detection - no runtime introspection of Main module.
+Uses type-based detection and reflection to extract device ID.
+Automatically handles wrapped arrays (OffsetArray, SubArray, etc.).
 
 # Arguments
-- `arr`: GPU array (CuArray, ROCArray, MtlArray, etc.)
+- `arr`: GPU array (CuArray, ROCArray, MtlArray, etc.), possibly wrapped
 
 # Returns
 - `(backend::Symbol, device_id::Int)`: Backend name and device ID
 
 # Design Philosophy (Linus-style)
-Old code: isdefined(Main, :CUDA) - hacky runtime introspection
-New code: Type name pattern matching - simple and direct
-No special cases for device ID - just use 0 as default
+Good taste: Use type dispatch for backend-specific logic
+Simple: Direct field access, no complex introspection
+Practical: Fallback to device 0 if extraction fails
+Robust: Unwrap array wrappers automatically
+
+# Device ID Extraction Strategy
+- CUDA.jl: Get device directly from array object
+- AMDGPU.jl: Get device from array, convert from 1-indexed to 0-indexed
+- Metal.jl: Always device 0 (single GPU)
+- oneAPI.jl: Try device field, fallback to 0
 
 # Examples
 ```julia
 using CUDA
+CUDA.device!(2)
 x = CUDA.CuArray([1, 2, 3])
-backend, dev_id = detect_gpu_backend(x)  # (:CUDA, 0)
+backend, dev_id = detect_gpu_backend(x)  # (:CUDA, 2)
+
+# Also works with wrapped arrays!
+using OffsetArrays
+y = OffsetArray(x, -1:1)
+backend, dev_id = detect_gpu_backend(y)  # (:CUDA, 2) - unwraps automatically
 ```
 """
 function detect_gpu_backend(arr)
-    arr_type = typeof(arr)
+    # Unwrap any array wrappers to get to the actual GPU array
+    unwrapped = _get_root_array(arr)
+
+    arr_type = typeof(unwrapped)
     type_name = string(arr_type.name.name)
 
-    # Detect backend from array type name
-    # Simple pattern matching - no runtime introspection needed
+    # Detect backend from array type name and extract device ID
     if occursin("Cu", type_name) || occursin("CUDA", type_name)
-        return (:CUDA, 0)  # Default to device 0
+        device_id = _extract_cuda_device_id(unwrapped)
+        return (:CUDA, device_id)
 
     elseif occursin("ROC", type_name) || occursin("AMD", type_name)
-        return (:ROCm, 0)  # Default to device 0
+        device_id = _extract_rocm_device_id(unwrapped)
+        return (:ROCm, device_id)
 
     elseif occursin("Mtl", type_name) || occursin("Metal", type_name)
+        # Metal.jl: Apple systems typically have single GPU
         return (:Metal, 0)
 
     elseif occursin("oneAPI", type_name)
-        return (:oneAPI, 0)
+        device_id = _extract_oneapi_device_id(unwrapped)
+        return (:oneAPI, device_id)
 
     else
         error(
@@ -123,6 +143,107 @@ function detect_gpu_backend(arr)
             "If you're using a custom GPU array type, specify backend explicitly.",
         )
     end
+end
+
+"""
+    _extract_cuda_device_id(arr) -> Int
+
+Extract device ID from a CUDA array.
+
+Design Philosophy (Linus-style):
+- Good taste: Use parentmodule() to get the array's package directly
+- No hacks: No Main.CUDA nonsense, no isdefined checks
+- Direct: Call CUDA.device() and convert to Int
+
+Strategy:
+1. Get CUDA module via parentmodule(typeof(arr))
+2. Call CUDA.device() to get current device (arrays are on current device)
+3. Convert CuDevice to Int (0-indexed)
+4. Fallback to 0 if anything fails
+
+Note: CUDA.jl uses 0-indexed device IDs, matching DLPack standard.
+"""
+function _extract_cuda_device_id(arr)
+    try
+        # Navigate to root CUDA module
+        cuda_module = _navigate_to_root_module(arr, :CUDA)
+
+        # Get device ID
+        return cuda_module.deviceid(cuda_module.device(arr))
+    catch _
+        # Silent fallback - could fail if CUDA API changed
+        # Better to return 0 than crash user's code
+    end
+
+    return 0
+end
+
+"""
+    _extract_rocm_device_id(arr) -> Int
+
+Extract device ID from a ROCm/AMDGPU array.
+
+Design Philosophy (Linus-style):
+- Direct module access via parentmodule()
+- Handle index conversion explicitly (AMDGPU 1-indexed → DLPack 0-indexed)
+- Clear comments explaining the conversion
+
+Strategy:
+1. Get AMDGPU module via parentmodule()
+2. Call AMDGPU.device_id() to get current device
+3. Convert from 1-indexed (AMDGPU) to 0-indexed (DLPack)
+4. Fallback to 0 if anything fails
+
+Note: AMDGPU.jl uses 1-indexed device IDs, but DLPack uses 0-indexed.
+"""
+function _extract_rocm_device_id(arr)
+    try
+        # Navigate to AMDGPU root module
+        amdgpu_module = _navigate_to_root_module(arr, :AMDGPU)
+
+        # AMDGPU.device_id() returns 1-indexed (1, 2, 3, ...)
+        dev_id_1indexed = amdgpu_module.device_id(amdgpu_module.device(arr))
+
+        # DLPack uses 0-indexed device IDs
+        # AMDGPU device 1 → DLPack device 0
+        return dev_id_1indexed - 1
+    catch _
+        # Silent fallback
+    end
+
+    return 0
+end
+
+"""
+    _extract_oneapi_device_id(arr) -> Int
+
+Extract device ID from a oneAPI array.
+
+Design Philosophy (Linus-style):
+- Honest: We don't know oneAPI.jl internals yet
+- Practical: Return 0 until someone with Intel hardware can test
+- TODO: Needs investigation with actual oneAPI.jl code
+
+Currently returns 0 (needs investigation of oneAPI.jl internals).
+If you use oneAPI.jl and know how to get device ID, please contribute!
+"""
+function _extract_oneapi_device_id(arr)
+    try
+        # Navigate to oneAPI root module
+        oneapi_module = _navigate_to_root_module(arr, :oneAPI)
+
+        # TODO: Find the correct oneAPI.jl API for device queries
+        # Possibilities:
+        # - oneapi_module.device()
+        # - oneapi_module.device_id()
+        # - arr.queue.device or similar
+        #
+        # For now, assume device 0 (most common case)
+    catch _
+        # Silent fallback
+    end
+
+    return 0
 end
 
 # Deleted from_gpu_array - it's redundant!
@@ -256,6 +377,120 @@ function print_gpu_info()
         println("    • Backend available (device enumeration requires importing package)")
     end
 end
+
+# ============================================================================
+# Internal Utilities
+# ============================================================================
+
+"""
+    _get_root_array(arr) -> AbstractArray
+
+Unwrap array wrappers to find the underlying root array.
+
+Design Philosophy (Linus-style):
+- Good taste: Use Julia's standard `parent()` interface
+- Simple: Recursively unwrap until we can't anymore
+- Handles all wrappers: OffsetArray, SubArray, ReshapedArray, etc.
+
+# Arguments
+- `arr`: Potentially wrapped array
+
+# Returns
+- `AbstractArray`: The unwrapped underlying array
+
+# Why This Matters
+GPU arrays are often wrapped by:
+- OffsetArrays.OffsetArray (custom indexing)
+- SubArray (views)
+- ReshapedArray (reshape)
+- PermutedDimsArray (permutedims)
+- ReinterpretArray (reinterpret)
+
+All these wrappers implement `parent()` to access the underlying array.
+
+# Examples
+```julia
+using CUDA, OffsetArrays
+
+x = CuArray([1, 2, 3])
+y = OffsetArray(x, -1:1)
+
+unwrapped = _get_root_array(y)  # Returns x (the CuArray)
+```
+"""
+function _get_root_array(arr)
+    current = arr
+
+    # Keep unwrapping while parent() gives us something different
+    while hasmethod(parent, Tuple{typeof(current)})
+        next = parent(current)
+        # Stop if parent() returns the same object (we've reached the bottom)
+        if next === current
+            break
+        end
+        current = next
+    end
+
+    return current
+end
+
+"""
+    _navigate_to_root_module(arr, target_module_name::Symbol) -> Module
+
+Navigate from an array's type to its root GPU package module.
+
+Design Philosophy (Linus-style):
+- Good taste: One function handles all GPU backends
+- Simple: Just walk up the module tree
+- No special cases: Same logic for CUDA, AMDGPU, oneAPI, Metal
+
+# Arguments
+- `arr`: GPU array object (will be unwrapped if it's a wrapper)
+- `target_module_name::Symbol`: Name of the root module to find (:CUDA, :AMDGPU, :oneAPI, :Metal)
+
+# Returns
+- `Module`: The root module of the GPU package
+
+# Algorithm
+1. Unwrap array wrappers to find the actual GPU array
+2. Start from `parentmodule(typeof(arr))`
+3. Walk up the module tree via repeated `parentmodule()` calls
+4. Stop when we reach a module with the target name OR the root (module is its own parent)
+
+# Examples
+```julia
+using CUDA
+x = CUDA.CuArray([1, 2, 3])
+cuda_module = _navigate_to_root_module(x, :CUDA)
+# Returns: CUDA module
+
+# Also works with wrappers!
+using OffsetArrays
+y = OffsetArray(x, -1:1)
+cuda_module = _navigate_to_root_module(y, :CUDA)  # Still returns CUDA module
+```
+"""
+function _navigate_to_root_module(arr, target_module_name::Symbol)
+    # First, unwrap any array wrappers
+    unwrapped = _get_root_array(arr)
+
+    arr_module = parentmodule(typeof(unwrapped))
+
+    # Walk up the module tree to find the root module
+    while parentmodule(arr_module) !== arr_module
+        arr_module = parentmodule(arr_module)
+        # Early exit if we found the target module
+        if nameof(arr_module) == target_module_name
+            break
+        end
+    end
+
+    return arr_module
+end
+
+# ============================================================================
+# GPU Device ID Extraction
+# ============================================================================
 
 # Extend from_julia_array to handle GPU arrays
 """

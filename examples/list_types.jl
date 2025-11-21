@@ -9,7 +9,7 @@ println("Listing registered type keys...")
 
 for i in vcat(0:12, 64:74, 128:139)
     info_ptr = LibTVMFFI.TVMFFIGetTypeInfo(Int32(i))
-    
+
     if info_ptr != C_NULL
         info = unsafe_load(info_ptr)
         key = info.type_key
