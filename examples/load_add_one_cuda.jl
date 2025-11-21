@@ -31,8 +31,11 @@ Based on tvm-ffi/examples/quickstart/load/load_cuda.cc
 
 using TVMFFI
 
+# Load fixture utilities (auto-builds if needed)
+include("fixtures_utils.jl")
+
 println("=" ^ 70)
-println("TVM FFI Julia Example: Loading add_one_cuda.so (GPU)")
+println("TVM FFI Julia Example: Loading add_one_cuda (GPU)")
 println("=" ^ 70)
 
 # Check if CUDA is available
@@ -49,38 +52,39 @@ if !has_cuda
     println("   • CUDA.jl package: using Pkg; Pkg.add(\"CUDA\")")
     println("   • CUDA-capable GPU")
     println("   • CUDA toolkit")
-    println("\n   Falling back to CPU-GPU memory transfer demo...")
+    println("\n   Note: The fixture will still be built, but GPU execution will be skipped.")
+    println("   You can run this example later once CUDA is available.\n")
 end
 
-# Path to the compiled CUDA module
-module_path = joinpath(@__DIR__, "../../../examples/quickstart/build/add_one_cuda.so")
-
-println("\n1. Loading CUDA module from: $module_path")
-
-# Check if file exists
-if !isfile(module_path)
-    println("❌ Error: Module file not found!")
-    println("   Please build the CUDA example first:")
-    println("   cd tvm-ffi/examples/quickstart")
-    println("   cmake . -B build -DEXAMPLE_NAME=\"compile_cuda\"")
-    println("   cmake --build build")
+# Ensure CUDA fixture is built (auto-builds on first run, including CUDA kernel)
+println("1. Preparing CUDA fixture...")
+module_path = try
+    ensure_fixture_built("add_one_cuda")
+catch e
+    println("❌ Error building CUDA fixture:")
+    println("   ", e)
+    println("\n   This likely means:")
+    println("   • CUDA toolkit not installed, or")
+    println("   • nvcc not in PATH, or")
+    println("   • CMake cannot find CUDA")
+    println("\n   To disable CUDA fixture build:")
+    println("   cmake ../fixtures -B build/fixtures -DBUILD_CUDA_FIXTURES=OFF")
     exit(1)
 end
+println("   ✓ CUDA fixture ready: $module_path")
 
 # Load the module
+println("\n2. Loading CUDA module...")
 module_loader = get_global_func("ffi.ModuleLoadFromFile")
 if module_loader === nothing
     println("❌ Error: ffi.ModuleLoadFromFile not found!")
     exit(1)
 end
 
-println("✓ Found module loader function")
-
-println("\n2. Loading CUDA module...")
 tvm_module = try
     module_loader(module_path)
 catch e
-    println("❌ Error loading module:")
+    println("❌ Error loading CUDA module:")
     println("   ", e)
     exit(1)
 end
@@ -102,129 +106,206 @@ end
 println("✓ Got CUDA function: ", typeof(add_one_cuda))
 
 if has_cuda
-    println("\n4. Using CUDA.jl arrays...")
+    println("\n" * "="^70)
+    println("🚀 CUDA Stride-Aware N-D Array Support")
+    println("="^70)
+    println("\nThis demonstrates the upgraded CUDA kernel that handles:")
+    println("  • Any dimensionality (1D, 2D, 3D, ...)")
+    println("  • Non-contiguous memory (arbitrary strides)")
+    println("  • Julia's column-major layout")
+    println("  • Zero-copy views and slices\n")
 
-    # Create CUDA arrays
+    # ============================================================
+    # Test 1: Simple 1D vector
+    # ============================================================
+    println("=" ^ 70)
+    println("Test 1: Simple 1D Vector")
+    println("=" ^ 70)
+    
     x_gpu = CUDA.CuArray(Float32[1, 2, 3, 4, 5])
     y_gpu = CUDA.zeros(Float32, 5)
 
-    println("   Input (x_gpu):  ", Array(x_gpu))
-    println("   Output (y_gpu): ", Array(y_gpu))
-
-    # NEW: Direct GPU array passing! (Auto-conversion)
-    # GPU arrays are automatically converted to DLTensorHolder with CUDA device
-    println("\n5. Calling add_one_cuda(x, y) on GPU - direct array passing!")
-    println("   (GPU arrays auto-converted to holders with auto-detected CUDA device)")
-    try
-        add_one_cuda(x_gpu, y_gpu)  # ← Pass GPU arrays directly!
-        CUDA.synchronize()  # Wait for GPU to finish
-        println("✓ CUDA function call succeeded!")
-    catch e
-        println("❌ Error calling CUDA function:")
-        println("   ", e)
-        exit(1)
-    end
-
-    # Check results
-    println("\n7. Results:")
-    y_host = Array(y_gpu)
-    x_host = Array(x_gpu)
-    println("   Input (x):   ", x_host)
-    println("   Output (y):  ", y_host)
-    println("   Expected:    ", x_host .+ 1)
-
-    # Verify
-    if y_host ≈ x_host .+ 1
-        println("\n✅ SUCCESS! GPU output matches expected values!")
+    println("Input:  ", Array(x_gpu))
+    add_one_cuda(x_gpu, y_gpu)
+    CUDA.synchronize()
+    
+    result = Array(y_gpu)
+    expected = Float32[2, 3, 4, 5, 6]
+    println("Output: ", result)
+    println("Expected: ", expected)
+    
+    if result ≈ expected
+        println("✅ 1D vector passed")
     else
-        println("\n❌ FAILED! Output does not match")
-        println("   Difference: ", y_host .- (x_host .+ 1))
+        println("❌ 1D vector FAILED")
+        exit(1)
     end
 
     # ============================================================
-    # NEW: Zero-copy slice support for GPU arrays!
+    # Test 2: 1D strided view (every 2nd element)
     # ============================================================
-    println("\n" * "="^60)
-    println("🚀 BONUS: Zero-Copy GPU Slice Support")
-    println("="^60)
+    println("\n" * "=" ^ 70)
+    println("Test 2: 1D Strided View (stride=2)")
+    println("=" ^ 70)
+    
+    x_vec_gpu = CUDA.CuArray(Float32[1, 2, 3, 4, 5, 6, 7, 8])
+    y_vec_gpu = CUDA.zeros(Float32, 8)
+    x_strided = @view x_vec_gpu[1:2:end]  # [1, 3, 5, 7]
+    y_strided = @view y_vec_gpu[1:2:end]
 
-    # Create a GPU vector for contiguous slice demo
-    println("\n8. Creating GPU vector for slice demo...")
-    gpu_vector = CUDA.CuArray(Float32[1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
-    println("   GPU Vector: ", Array(gpu_vector))
-
-    # Test 1: Contiguous slice (first half)
-    println("\n9. Testing contiguous GPU slice (zero-copy!)...")
-    gpu_slice = @view gpu_vector[1:5]  # First 5 elements
-    gpu_slice_output = CUDA.zeros(Float32, 5)
-
-    println("   Input slice:  ", Array(gpu_slice))
-    println("   Stride: ", Base.strides(gpu_slice), " (contiguous)")
-
-    # Direct GPU slice passing! Auto-converted
-    add_one_cuda(gpu_slice, gpu_slice_output)  # ← Slices work too!
+    println("Input (strided):  ", Array(x_strided))
+    println("Stride: ", Base.strides(x_strided))
+    add_one_cuda(x_strided, y_strided)
     CUDA.synchronize()
-
-    println("   Output:       ", Array(gpu_slice_output))
-    println("   Expected:     ", Array(gpu_slice) .+ 1)
-
-    if Array(gpu_slice_output) ≈ Array(gpu_slice) .+ 1
-        println("   ✅ GPU contiguous slice works!")
+    
+    result = Array(y_strided)
+    expected = Float32[2, 4, 6, 8]
+    println("Output: ", result)
+    println("Expected: ", expected)
+    
+    if result ≈ expected
+        println("✅ Strided 1D passed")
     else
-        println("   ❌ GPU slice failed!")
+        println("❌ Strided 1D FAILED")
         exit(1)
     end
 
-    # Test 2: GPU column slice (contiguous in column-major)
-    println("\n10. Testing GPU column slice (zero-copy!)...")
-    gpu_matrix = CUDA.CuArray(Float32[1 2 3 4
-                                      5 6 7 8
-                                      9 10 11 12])
-    gpu_col = @view gpu_matrix[:, 3]  # Third column (contiguous!)
-    gpu_col_output = CUDA.zeros(Float32, 3)
+    # ============================================================
+    # Test 3: 2D Matrix (THE BUG WE JUST FIXED!)
+    # ============================================================
+    println("\n" * "=" ^ 70)
+    println("Test 3: 2D Matrix (Column-Major Layout)")
+    println("=" ^ 70)
+    
+    x_mat_gpu = CUDA.CuArray(Float32[1 2 3; 4 5 6])  # 2×3
+    y_mat_gpu = CUDA.similar(x_mat_gpu)
 
-    println("   Input column:  ", Array(gpu_col))
-    println("   Stride: ", Base.strides(gpu_col), " (contiguous)")
-
-    # Direct GPU column slice passing!
-    add_one_cuda(gpu_col, gpu_col_output)
+    println("Input shape: ", size(x_mat_gpu))
+    println("Input strides: ", Base.strides(x_mat_gpu))
+    println("Input:\n", Array(x_mat_gpu))
+    
+    add_one_cuda(x_mat_gpu, y_mat_gpu)
     CUDA.synchronize()
-
-    println("   Output:       ", Array(gpu_col_output))
-    println("   Expected:     ", Array(gpu_col) .+ 1)
-
-    if Array(gpu_col_output) ≈ Array(gpu_col) .+ 1
-        println("   ✅ GPU column slice works!")
+    
+    result = Array(y_mat_gpu)
+    expected = Float32[2 3 4; 5 6 7]
+    println("Output:\n", result)
+    println("Expected:\n", expected)
+    
+    if result ≈ expected
+        println("✅ 2D matrix passed (bug fixed!)")
     else
-        println("   ❌ GPU column slice failed!")
+        println("❌ 2D matrix FAILED")
+        println("Difference:\n", result .- expected)
         exit(1)
     end
 
-    println("\n" * "="^60)
-    println("✅ GPU CONTIGUOUS SLICE SUPPORT VERIFIED!")
-    println("="^60)
-    println("\n⚠️  Note about non-contiguous slices:")
-    println("  The add_one kernel assumes contiguous memory (stride=1).")
-    println("  For non-contiguous slices (e.g., row slices in column-major),")
-    println("  a stride-aware kernel would be needed.")
-    println("\nKey Points:")
-    println("  • ✅ Contiguous slices: Full zero-copy support")
-    println("  • ✅ Column slices: Contiguous in column-major layout")
-    println("  • ✅ Safe: Holders keep parent GPU arrays alive")
-    println("  • ⚠️  Non-contiguous slices: Require stride-aware kernels")
+    # ============================================================
+    # Test 4: Column slice (contiguous)
+    # ============================================================
+    println("\n" * "=" ^ 70)
+    println("Test 4: Column Slice (Contiguous in Column-Major)")
+    println("=" ^ 70)
+    
+    mat_gpu = CUDA.CuArray(Float32[1 2 3 4; 5 6 7 8; 9 10 11 12])
+    x_col = @view mat_gpu[:, 2]  # [2, 6, 10]
+    y_col = CUDA.similar(x_col)
 
-else
-    # Demo without CUDA.jl - show the concept
-    println("\n4. CUDA not available - showing concept...")
-    println("   With CUDA.jl, you would:")
-    println("   • Create CuArray on GPU")
-    println("   • Convert to DLTensor with cuda() device")
-    println("   • Call TVM CUDA function")
-    println("   • Results computed on GPU!")
+    println("Input column: ", Array(x_col))
+    println("Stride: ", Base.strides(x_col), " (contiguous)")
+    
+    add_one_cuda(x_col, y_col)
+    CUDA.synchronize()
+    
+    result = Array(y_col)
+    expected = Float32[3, 7, 11]
+    println("Output: ", result)
+    println("Expected: ", expected)
+    
+    if result ≈ expected
+        println("✅ Column slice passed")
+    else
+        println("❌ Column slice FAILED")
+        exit(1)
+    end
 
-    println("\n   To enable CUDA support:")
-    println("   julia> using Pkg")
-    println("   julia> Pkg.add(\"CUDA\")")
+    # ============================================================
+    # Test 5: Row slice (NON-contiguous, stride > 1)
+    # ============================================================
+    println("\n" * "=" ^ 70)
+    println("Test 5: Row Slice (Non-Contiguous, Stride-Aware)")
+    println("=" ^ 70)
+    
+    x_row = @view mat_gpu[2, :]  # [5, 6, 7, 8]
+    y_row = CUDA.similar(x_row)
+
+    println("Input row: ", Array(x_row))
+    println("Stride: ", Base.strides(x_row), " (non-contiguous!)")
+    
+    add_one_cuda(x_row, y_row)
+    CUDA.synchronize()
+    
+    result = Array(y_row)
+    expected = Float32[6, 7, 8, 9]
+    println("Output: ", result)
+    println("Expected: ", expected)
+    
+    if result ≈ expected
+        println("✅ Row slice passed (stride-aware!)")
+    else
+        println("❌ Row slice FAILED")
+        exit(1)
+    end
+
+    # ============================================================
+    # Test 6: 2D sub-matrix
+    # ============================================================
+    println("\n" * "=" ^ 70)
+    println("Test 6: 2D Sub-Matrix (Complex Strides)")
+    println("=" ^ 70)
+    
+    big_mat = CUDA.CuArray(Float32[1 2 3 4; 5 6 7 8; 9 10 11 12; 13 14 15 16])
+    x_sub = @view big_mat[2:3, 2:3]  # 2×2 sub-matrix
+    y_sub = CUDA.similar(x_sub)
+
+    println("Input shape: ", size(x_sub))
+    println("Input strides: ", Base.strides(x_sub))
+    println("Input:\n", Array(x_sub))
+    
+    add_one_cuda(x_sub, y_sub)
+    CUDA.synchronize()
+    
+    result = Array(y_sub)
+    expected = Float32[7 8; 11 12]
+    println("Output:\n", result)
+    println("Expected:\n", expected)
+    
+    if result ≈ expected
+        println("✅ 2D sub-matrix passed")
+    else
+        println("❌ 2D sub-matrix FAILED")
+        exit(1)
+    end
+
+    # ============================================================
+    # Summary
+    # ============================================================
+    println("\n" * "="^70)
+    println("✅ ALL CUDA STRIDE-AWARE TESTS PASSED!")
+    println("="^70)
+    println("\nVerified capabilities:")
+    println("  ✅ 1D vectors")
+    println("  ✅ Strided views (non-contiguous memory)")
+    println("  ✅ 2D matrices (column-major layout)")
+    println("  ✅ Column slices (contiguous)")
+    println("  ✅ Row slices (non-contiguous)")
+    println("  ✅ Sub-matrices (complex strides)")
+    println("\n🎉 The CUDA kernel correctly handles:")
+    println("  • Arbitrary dimensions (N-D)")
+    println("  • Arbitrary strides (non-contiguous memory)")
+    println("  • Julia's column-major layout")
+    println("  • Zero-copy views (no data duplication)")
+    println("\nThis matches CPU functionality - feature parity achieved!")
 end
 
 println("\n" * "=" ^ 70)
@@ -232,23 +313,24 @@ println("CUDA Example Completed!")
 println("=" ^ 70)
 
 println("\n📝 Summary:")
-println("   ✓ Loaded TVM CUDA module")
+println("   ✓ Loaded TVM CUDA module with auto-build")
 println("   ✓ Retrieved 'add_one_cuda' function")
 if has_cuda
-    println("   ✓ Created CUDA arrays with CUDA.jl")
-    println("   ✓ Called TVM CUDA kernel successfully")
-    println("   ✓ Verified correct GPU execution")
-    println("   ✓ Tested GPU slice support (row and column slices)")
-    println("   ✓ Demonstrated zero-copy GPU views")
-    println("\nThis demonstrates:")
-    println("   • Loading CUDA modules")
-    println("   • GPU tensor passing")
-    println("   • Zero-copy GPU memory sharing")
-    println("   • Successful CUDA kernel execution")
-    println("   • 🆕 GPU slice support (like Rust!)")
-    println("   • 🆕 Zero-copy GPU views with proper strides")
+    println("   ✓ Tested 6 different array scenarios:")
+    println("     1. Simple 1D vectors")
+    println("     2. Strided views (stride=2)")
+    println("     3. 2D matrices (column-major)")
+    println("     4. Column slices (contiguous)")
+    println("     5. Row slices (non-contiguous)")
+    println("     6. Sub-matrices (complex strides)")
+    println("\n🎉 Key achievements:")
+    println("   • Stride-aware N-D CUDA kernel")
+    println("   • Correct column-major layout handling")
+    println("   • Zero-copy GPU memory access")
+    println("   • Feature parity with CPU implementation")
+    println("   • Full support for Julia's array semantics")
 else
-    println("   ⚠️  CUDA not available (demo mode)")
-    println("\nInstall CUDA.jl to run on GPU:")
+    println("   ⚠️  CUDA.jl not available (demo mode)")
+    println("\nInstall CUDA.jl to test stride-aware N-D GPU arrays:")
     println("   using Pkg; Pkg.add(\"CUDA\")")
 end

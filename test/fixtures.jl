@@ -1,4 +1,11 @@
-# Paths
+#=
+Test fixture utilities - shared implementation
+
+This file provides a test-specific wrapper around the shared fixtures utilities.
+The actual build logic is in the shared implementation to avoid duplication.
+=#
+
+# Paths (relative to test/ directory)
 const FIXTURES_DIR = joinpath(@__DIR__, "..", "fixtures")
 const BUILD_DIR = joinpath(@__DIR__, "..", "build")
 const FIXTURES_BUILD_DIR = joinpath(BUILD_DIR, "fixtures")
@@ -14,9 +21,11 @@ function fixture_path(name::String)
 end
 
 """
-    ensure_fixture_built(name::String)
+    ensure_fixture_built(name::String) -> String
 
-Check if fixture exists, build if not.
+Check if fixture exists, build if not. Returns path to fixture.
+
+For tests, we suppress verbose output to keep test logs clean.
 """
 function ensure_fixture_built(name::String)
     path = fixture_path(name)
@@ -33,8 +42,9 @@ function ensure_fixture_built(name::String)
 
     # Run CMake (it will call Julia to find TVMFFI_jll)
     try
-        run(`cmake $(FIXTURES_DIR) -B $(FIXTURES_BUILD_DIR) -DCMAKE_BUILD_TYPE=RelWithDebInfo`)
-        run(`cmake --build $(FIXTURES_BUILD_DIR) --config RelWithDebInfo`)
+        # Suppress output for clean test logs
+        run(pipeline(`cmake $(FIXTURES_DIR) -B $(FIXTURES_BUILD_DIR) -DCMAKE_BUILD_TYPE=RelWithDebInfo`, devnull))
+        run(pipeline(`cmake --build $(FIXTURES_BUILD_DIR) --config RelWithDebInfo`, devnull))
 
         # Copy to build/ for easy access
         for lib_file in readdir(FIXTURES_BUILD_DIR)
@@ -52,7 +62,14 @@ function ensure_fixture_built(name::String)
         return path
 
     catch e
-        error("Failed to build fixture '$name': $e\nMake sure CMake and C++ compiler are installed.")
+        error("""
+        Failed to build fixture '$name': $e
+        
+        Requirements:
+          • CMake (version ≥ 3.20)
+          • C++ compiler (g++/clang++)
+          • CUDA toolkit (for CUDA fixtures)
+        """)
     end
 end
 

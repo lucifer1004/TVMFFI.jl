@@ -1,5 +1,22 @@
 # Tests for Compiled Test Fixtures
 
+# Check if CUDA is available (both hardware and CUDA.jl)
+const CUDA_AVAILABLE = begin
+    cuda_functional = try
+        using CUDA
+        CUDA.functional()
+    catch
+        false
+    end
+    
+    # Also check if add_one_cuda fixture exists
+    cuda_fixture_exists = isfile(joinpath(@__DIR__, "..", "build", "add_one_cuda.so")) ||
+                          isfile(joinpath(@__DIR__, "..", "build", "add_one_cuda.dylib")) ||
+                          isfile(joinpath(@__DIR__, "..", "build", "add_one_cuda.dll"))
+    
+    cuda_functional && cuda_fixture_exists
+end
+
 @testset "Test Fixtures" begin
     @testset "add_one_cpu - Basic" begin
         # Load fixture (auto-builds if needed)
@@ -93,5 +110,49 @@
         y_complex = similar(x_complex)
         add_one(from_julia_array(x_complex), from_julia_array(y_complex))
         @test y_complex ≈ x_complex .+ 1
+    end
+
+    @testset "add_one_cuda - GPU Arrays (Optional)" begin
+        if !CUDA_AVAILABLE
+            @test_skip "CUDA not available (skipping GPU tests)"
+            return
+        end
+
+        # Load CUDA fixture
+        mod = load_fixture("add_one_cuda")
+        @test mod isa TVMModule
+        @test implements_function(mod, "add_one_cuda")
+        
+        add_one_cuda = mod["add_one_cuda"]
+        @test add_one_cuda isa TVMFunction
+
+        # Test 1: Basic CUDA array
+        x_gpu = CUDA.CuArray(Float32[1, 2, 3, 4, 5])
+        y_gpu = CUDA.similar(x_gpu)
+        add_one_cuda(from_julia_array(x_gpu), from_julia_array(y_gpu))
+        @test Array(y_gpu) ≈ Float32[2, 3, 4, 5, 6]
+
+        # Test 2: CUDA array with stride (every 2nd element)
+        x_vec_gpu = CUDA.CuArray(Float32[1, 2, 3, 4, 5, 6, 7, 8])
+        y_vec_gpu = CUDA.zeros(Float32, 8)
+        x_strided = @view x_vec_gpu[1:2:end]
+        y_strided = @view y_vec_gpu[1:2:end]
+        add_one_cuda(from_julia_array(x_strided), from_julia_array(y_strided))
+        @test Array(y_strided) ≈ Float32[2, 4, 6, 8]
+
+        # Test 3: 2D CUDA array
+        x_mat_gpu = CUDA.CuArray(Float32[1 2 3; 4 5 6])
+        y_mat_gpu = CUDA.similar(x_mat_gpu)
+        add_one_cuda(from_julia_array(x_mat_gpu), from_julia_array(y_mat_gpu))
+        @test Array(y_mat_gpu) ≈ Float32[2 3 4; 5 6 7]
+
+        # Test 4: Column slice (contiguous on GPU)
+        mat_gpu = CUDA.CuArray(Float32[1 2 3 4; 5 6 7 8; 9 10 11 12])
+        x_col = @view mat_gpu[:, 2]
+        y_col = CUDA.similar(x_col)
+        add_one_cuda(from_julia_array(x_col), from_julia_array(y_col))
+        @test Array(y_col) ≈ Float32[3, 7, 11]
+
+        @info "✓ CUDA tests passed"
     end
 end

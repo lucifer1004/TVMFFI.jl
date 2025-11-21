@@ -31,44 +31,27 @@ Based on tvm-ffi/examples/quickstart/load/load_numpy.py
 
 using TVMFFI
 
+# Load fixture utilities (auto-builds if needed)
+include("fixtures_utils.jl")
+
 println("=" ^ 60)
-println("TVM FFI Julia Example: Loading add_one_cpu.so")
+println("TVM FFI Julia Example: Loading add_one_cpu")
 println("=" ^ 60)
 
-# Path to the compiled module
-module_path = joinpath(
-    @__DIR__,
-    "..",
-    "build",
-    "add_one_cpu.so"
-)
+# Ensure fixture is built (auto-builds on first run)
+println("\n1. Preparing fixture...")
+module_path = ensure_fixture_built("add_one_cpu")
+println("   ✓ Fixture ready: $module_path")
 
-println("\n1. Loading module from: $module_path")
-
-# Check if file exists
-if !isfile(module_path)
-    println("❌ Error: Module file not found!")
-    println("   Please build the example first:")
-    println("   cd tvm-ffi/examples/quickstart")
-    println("   cmake . -B build -DEXAMPLE_NAME=\"compile_cpu\"")
-    println("   cmake --build build")
-    exit(1)
-end
-
-# Load the module using TVM FFI global function
-# ffi.ModuleLoadFromFile is registered in the TVM runtime
+# Load the module
+println("\n2. Loading module...")
 module_loader = get_global_func("ffi.ModuleLoadFromFile")
-
 if module_loader === nothing
     println("❌ Error: ffi.ModuleLoadFromFile not found!")
     println("   Make sure TVM FFI runtime library is properly loaded.")
     exit(1)
 end
 
-println("✓ Found module loader function")
-
-# Load the module
-println("\n2. Loading module...")
 tvm_module = try
     module_loader(module_path)
 catch e
