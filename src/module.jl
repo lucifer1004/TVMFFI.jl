@@ -63,8 +63,7 @@ function load_module(path::AbstractString)
         error("Module API not initialized - did __init__() run?")
     end
 
-    mod_obj = loader(path)
-    return TVMModule(mod_obj)
+    return loader(path)
 end
 
 """

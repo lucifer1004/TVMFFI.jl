@@ -1,1 +1,9 @@
 Manifest.toml
+
+# Build artifacts
+build/
+*.so
+*.dylib
+*.dll
+*.o
+*.a

@@ -78,8 +78,9 @@ include("string.jl")
 include("object.jl")
 include("tensor.jl")              # Defines DLTensor and basic conversions
 include("gpuarrays_support.jl")   # GPU abstraction (uses DLTensor, extends from_julia_array)
-include("function.jl")            # Uses DLTensor
-include("module.jl")              # High-level module API
+include("function.jl")            # Defines TVMFunction
+include("module.jl")              # Defines TVMModule
+include("conversion.jl")          # ABI boundary - depends on all types above
 
 # Module initialization
 function __init__()

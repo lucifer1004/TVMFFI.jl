@@ -39,10 +39,6 @@ println("=" ^ 60)
 module_path = joinpath(
     @__DIR__,
     "..",
-    "..",
-    "..",
-    "examples",
-    "quickstart",
     "build",
     "add_one_cpu.so"
 )
@@ -96,9 +92,10 @@ end
 add_one_cpu = try
     func_getter(tvm_module, "add_one_cpu", true)
 catch e
-    println("❌ Error getting function:")
-    println("   ", e)
-    exit(1)
+    throw(e)
+    # println("❌ Error getting function:")
+    # println("   ", e)
+    # exit(1)
 end
 
 println("✓ Got function: ", typeof(add_one_cpu))
