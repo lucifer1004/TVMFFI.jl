@@ -33,15 +33,18 @@ This repository uses **Jujutsu (jj)** for version control. Do **NOT** use standa
 
 The immediate goal is to reach feature parity with Python/Rust bindings. See `../STATUS.md` for a detailed matrix.
 
-### Priority 1: Function Registration
+### Priority 1: Function Registration ✅ COMPLETE
 We need to allow Julia functions to be called by TVM.
-1.  **Implement `CallbackFunctionObjImpl`**: Create a structure to hold a Julia closure and expose it as a TVM object.
-2.  **`register_global_func`**: Implement the API to register these objects into the global TVM registry.
-3.  **Argument Conversion**: Implement `from_tvm_any` and `to_tvm_any` logic specifically for handling callback arguments (handling `TVMValue` and `type_code` arrays from C).
+1.  ✅ **`CallbackFunctionObjImpl`**: Implemented via `safe_call` C callback with Julia function registry.
+2.  ✅ **`register_global_func`**: Fully functional API that registers Julia functions into TVM global registry.
+3.  ✅ **Argument Conversion**: Both `from_tvm_any` and `to_tvm_any` work for all major types (int, float, bool, string, objects).
+4.  ✅ **Exception Handling**: Julia exceptions are properly caught and translated to TVM errors.
 
-### Priority 2: Object Registration
+### Priority 2: Object Registration ⚠️ Partially Complete
 Allow defining custom TVM objects in Julia.
-1.  **`register_object` Macro**: Create a macro to generate the necessary boilerplate (type index registration, vtable, etc.) for a Julia struct to be a `TVMObject`.
+1.  ✅ **Basic `register_object` function**: Implemented. Can register type keys and allocate type indices.
+2.  ✅ **Type queries**: `get_type_index` works for looking up registered types.
+3.  **TODO: `@register_object` Macro**: Create a macro to generate full boilerplate (vtable, field accessors, methods) for a Julia struct to be a complete `TVMObject`.
 
 ### Priority 3: System Library
 1.  **`system_lib`**: Implement support for loading statically linked TVM modules.
