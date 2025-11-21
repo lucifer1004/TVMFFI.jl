@@ -50,6 +50,20 @@ using TVMFFI.LibTVMFFI  # Import for internal constants
         # Test string conversion
         @test string(dt_int32) == "int32"
         @test string(dt_float64) == "float64"
+        
+        # Test dtype_to_julia_type conversion
+        @test dtype_to_julia_type(DLDataType(Float16)) == Float16
+        @test dtype_to_julia_type(DLDataType(Float32)) == Float32
+        @test dtype_to_julia_type(DLDataType(Float64)) == Float64
+        @test dtype_to_julia_type(DLDataType(Int8)) == Int8
+        @test dtype_to_julia_type(DLDataType(Int16)) == Int16
+        @test dtype_to_julia_type(DLDataType(Int32)) == Int32
+        @test dtype_to_julia_type(DLDataType(Int64)) == Int64
+        @test dtype_to_julia_type(DLDataType(UInt8)) == UInt8
+        @test dtype_to_julia_type(DLDataType(UInt16)) == UInt16
+        @test dtype_to_julia_type(DLDataType(UInt32)) == UInt32
+        @test dtype_to_julia_type(DLDataType(UInt64)) == UInt64
+        @test dtype_to_julia_type(DLDataType(Bool)) == Bool
     end
 
     @testset "TVM String" begin

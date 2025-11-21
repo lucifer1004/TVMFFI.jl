@@ -58,7 +58,7 @@ export get_global_func, register_global_func
 export register_object, get_type_index
 export to_julia_array, from_julia_array
 export cpu, cuda, opencl, vulkan, metal, rocm
-export tvm_ffi_version
+export tvm_ffi_version, dtype_to_julia_type
 
 # Export high-level module API
 export load_module, get_function, system_lib

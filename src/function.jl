@@ -454,14 +454,8 @@ function from_tvm_any(any::LibTVMFFI.TVMFFIAny; borrowed::Bool = false)
         shape_vec = unsafe_wrap(Array, dltensor.shape, ndim) |> copy
         shape_tuple = Tuple(shape_vec)
         
-        # Determine type
-        T = if dltensor.dtype.code == UInt8(LibTVMFFI.kDLFloat)
-            dltensor.dtype.bits == 32 ? Float32 : Float64
-        elseif dltensor.dtype.code == UInt8(LibTVMFFI.kDLInt)
-            dltensor.dtype.bits == 32 ? Int32 : Int64
-        else
-            error("Unsupported dtype in DLTensor")
-        end
+        # Determine element type using helper function
+        T = dtype_to_julia_type(dltensor.dtype)
         
         data_ptr = Ptr{T}(dltensor.data)
         temp_arr = unsafe_wrap(Array, data_ptr, shape_tuple)

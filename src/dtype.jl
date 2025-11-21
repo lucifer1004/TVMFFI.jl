@@ -29,10 +29,70 @@ const DLDataType = LibTVMFFI.DLDataType
 const DLDataTypeCode = LibTVMFFI.DLDataTypeCode
 
 """
-    Base.string(dtype::DLDataType) -> String
+    dtype_to_julia_type(dtype::DLDataType) -> Type
 
-Convert DLDataType to string representation (e.g., "int32", "float64").
+Convert DLDataType to corresponding Julia type.
+
+# Examples
+```julia
+dt = DLDataType(Float32)
+T = dtype_to_julia_type(dt)  # Returns Float32
+
+dt2 = DLDataType("int64")
+T2 = dtype_to_julia_type(dt2)  # Returns Int64
+```
+
+# Supported Types
+- Float: Float16, Float32, Float64
+- Int: Int8, Int16, Int32, Int64
+- UInt: UInt8, UInt16, UInt32, UInt64
+- Bool
+
+# Throws
+Throws an error for unsupported dtype codes or bit widths.
 """
+function dtype_to_julia_type(dtype::DLDataType)
+    if dtype.code == UInt8(LibTVMFFI.kDLFloat)
+        if dtype.bits == 16
+            return Float16
+        elseif dtype.bits == 32
+            return Float32
+        elseif dtype.bits == 64
+            return Float64
+        else
+            error("Unsupported float bit width: $(dtype.bits)")
+        end
+    elseif dtype.code == UInt8(LibTVMFFI.kDLInt)
+        if dtype.bits == 8
+            return Int8
+        elseif dtype.bits == 16
+            return Int16
+        elseif dtype.bits == 32
+            return Int32
+        elseif dtype.bits == 64
+            return Int64
+        else
+            error("Unsupported int bit width: $(dtype.bits)")
+        end
+    elseif dtype.code == UInt8(LibTVMFFI.kDLUInt)
+        if dtype.bits == 8
+            return UInt8
+        elseif dtype.bits == 16
+            return UInt16
+        elseif dtype.bits == 32
+            return UInt32
+        elseif dtype.bits == 64
+            return UInt64
+        else
+            error("Unsupported uint bit width: $(dtype.bits)")
+        end
+    elseif dtype.code == UInt8(LibTVMFFI.kDLBool)
+        return Bool
+    else
+        error("Unsupported DLDataType code: $(dtype.code)")
+    end
+end
+
 function Base.string(dtype::DLDataType)
     ret, any_result = LibTVMFFI.TVMFFIDataTypeToString(dtype)
     check_call(ret)
