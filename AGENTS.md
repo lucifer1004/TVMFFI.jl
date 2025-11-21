@@ -46,8 +46,11 @@ Allow defining custom TVM objects in Julia.
 2.  ✅ **Type queries**: `get_type_index` works for looking up registered types.
 3.  **TODO: `@register_object` Macro**: Create a macro to generate full boilerplate (vtable, field accessors, methods) for a Julia struct to be a complete `TVMObject`.
 
-### Priority 3: System Library
-1.  **`system_lib`**: Implement support for loading statically linked TVM modules.
+### Priority 3: System Library ✅ COMPLETE
+1.  ✅ **`system_lib()`**: Access statically linked TVM modules.
+2.  ✅ **Module introspection**: `inspect_source()`, `get_module_kind()`.
+3.  ✅ **Module export**: `write_to_file()` for saving compiled modules.
+4.  ✅ **Function checking**: `implements_function()` to verify function availability.
 
 ## Directory Structure
 -   `src/LibTVMFFI.jl`: Low-level C bindings (generated/maintained manually).

@@ -61,7 +61,8 @@ export cpu, cuda, opencl, vulkan, metal, rocm
 export tvm_ffi_version
 
 # Export high-level module API
-export load_module, get_function
+export load_module, get_function, system_lib
+export write_to_file, inspect_source, get_module_kind, implements_function
 
 # Export GPU support functions
 # Note: No from_gpu_array - from_julia_array handles everything!

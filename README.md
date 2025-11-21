@@ -27,12 +27,14 @@ TVMFFI.jl provides a complete, idiomatic Julia interface to TVM's C API:
 ### ✅ Module System
 - **Load Modules**: `load_module()` to load compiled TVM modules
 - **Query Functions**: `mod["function_name"]` or `get_function(mod, name)`
+- **System Library**: `system_lib()` for statically linked modules
+- **Module Introspection**: `inspect_source()`, `get_module_kind()`, `implements_function()`
+- **Module Export**: `write_to_file()` to save compiled modules
 - **Module Caching**: Efficient global function caching
 
-### 🔧 In Progress
-- **Full Object Reflection**: Complete `@register_object` macro with field/method registration
-- **System Library**: `system_lib()` for statically linked modules
-- **Cross-language Tests**: Comparison tests against Python/Rust implementations
+### 🔧 Optional/Future Enhancements
+- **Full Object Reflection**: Complete `@register_object` macro with field/method registration (only needed for advanced metaprogramming)
+- **Cross-language Tests**: Comparison tests against Python/Rust implementations (infrastructure is ready)
 
 ## Installation
 
