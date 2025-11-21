@@ -1,0 +1,17 @@
+name = "TVMFFI"
+uuid = "b9edd577-36ff-4738-b9a8-ebb7fbd77e94"
+version = "0.1.0"
+authors = ["Zihua Wu <13583761+lucifer1004@users.noreply.github.com>"]
+
+[deps]
+TVMFFI_jll = "7af0ec00-f2f5-592e-a8a6-f550b668bbed"
+
+[compat]
+TVMFFI_jll = "0.1.2"
+julia = "1.10"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
