@@ -60,17 +60,32 @@ mutable struct TVMError <: Exception
             backtrace::AbstractString = ""
     )
         # Create byte arrays for C API
-        kind_bytes = LibTVMFFI.TVMFFIByteArray(pointer(kind.name), sizeof(kind.name))
-        msg_bytes = LibTVMFFI.TVMFFIByteArray(pointer(message), sizeof(message))
-        bt_bytes = LibTVMFFI.TVMFFIByteArray(pointer(backtrace), sizeof(backtrace))
+        # CRITICAL: Must preserve strings during C API call
+        kind_str = kind.name  # Extract to local variable for GC.@preserve
+        msg_str = string(message)
+        bt_str = string(backtrace)
+        
+        local ret, handle
+        GC.@preserve kind_str msg_str bt_str begin
+            kind_bytes = LibTVMFFI.TVMFFIByteArray(
+                Ptr{UInt8}(pointer(kind_str)), UInt(sizeof(kind_str))
+            )
+            msg_bytes = LibTVMFFI.TVMFFIByteArray(
+                Ptr{UInt8}(pointer(msg_str)), UInt(sizeof(msg_str))
+            )
+            bt_bytes = LibTVMFFI.TVMFFIByteArray(
+                Ptr{UInt8}(pointer(bt_str)), UInt(sizeof(bt_str))
+            )
 
-        ret, handle = LibTVMFFI.TVMFFIErrorCreate(kind_bytes, msg_bytes, bt_bytes)
+            ret, handle = LibTVMFFI.TVMFFIErrorCreate(kind_bytes, msg_bytes, bt_bytes)
+        end
+        
         if ret != 0
             # Error creating error object - this is bad, but we can't recurse
             error("Failed to create TVM error object (out of memory?)")
         end
 
-        err = new(handle, kind.name, string(message), string(backtrace))
+        err = new(handle, kind_str, msg_str, bt_str)
 
         # Register finalizer to decrease reference count
         finalizer(err) do e

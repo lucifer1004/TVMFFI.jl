@@ -71,8 +71,14 @@ dt = DLDataType("bool")
 ```
 """
 function DLDataType(dtype_str::AbstractString)
-    byte_array = LibTVMFFI.TVMFFIByteArray(pointer(dtype_str), sizeof(dtype_str))
-    ret, dtype = LibTVMFFI.TVMFFIDataTypeFromString(byte_array)
+    local ret, dtype
+    GC.@preserve dtype_str begin
+        byte_array = LibTVMFFI.TVMFFIByteArray(
+            Ptr{UInt8}(pointer(dtype_str)), UInt(sizeof(dtype_str))
+        )
+        ret, dtype = LibTVMFFI.TVMFFIDataTypeFromString(byte_array)
+    end
+    
     check_call(ret)
     return dtype
 end

@@ -53,12 +53,14 @@ function safe_call(
         func = func_ref[]
 
         # Convert arguments
+        # NOTE: args from C are borrowed references (views)
+        # We must copy them (own=true) to avoid use-after-free when GC runs
         julia_args = Vector{Any}(undef, num_args)
         for i in 1:num_args
             # Pointer arithmetic to get i-th argument
             arg_ptr = args + (i - 1) * sizeof(LibTVMFFI.TVMFFIAny)
             arg_any = unsafe_load(arg_ptr)
-            julia_args[i] = from_tvm_any(arg_any)
+            julia_args[i] = from_tvm_any_borrowed(arg_any)
         end
 
         # Call function
@@ -76,23 +78,26 @@ function safe_call(
         msg = sprint(showerror, e, catch_backtrace())
         
         # Create TVM error
+        # CRITICAL: Must preserve strings during C API call to prevent GC
         kind_str = "RuntimeError"
-        kind_bytes = LibTVMFFI.TVMFFIByteArray(pointer(kind_str), sizeof(kind_str))
-        msg_bytes = LibTVMFFI.TVMFFIByteArray(pointer(msg), sizeof(msg))
-        # No backtrace for now (empty byte array)
-        bt_bytes = LibTVMFFI.TVMFFIByteArray(C_NULL, 0)
-        
-        err_ret, err_handle = LibTVMFFI.TVMFFIErrorCreate(kind_bytes, msg_bytes, bt_bytes)
-        
-        if err_ret == 0 && err_handle != C_NULL
-            LibTVMFFI.TVMFFIErrorSetRaised(err_handle)
-            # We don't own the error handle after SetRaised? 
-            # Actually SetRaised just sets TLS. We should probably DecRef if we own it.
-            # TVMFFIErrorCreate returns a new reference.
-            # TVMFFIErrorSetRaised takes the handle. It likely increments ref count internally if needed,
-            # or we are just passing our reference.
-            # Standard practice: Create -> SetRaised -> DecRef (if we don't need it anymore)
-            LibTVMFFI.TVMFFIObjectDecRef(err_handle)
+        GC.@preserve kind_str msg begin
+            kind_bytes = LibTVMFFI.TVMFFIByteArray(
+                Ptr{UInt8}(pointer(kind_str)), UInt(sizeof(kind_str))
+            )
+            msg_bytes = LibTVMFFI.TVMFFIByteArray(
+                Ptr{UInt8}(pointer(msg)), UInt(sizeof(msg))
+            )
+            # No backtrace for now (empty byte array)
+            bt_bytes = LibTVMFFI.TVMFFIByteArray(C_NULL, 0)
+            
+            err_ret, err_handle = LibTVMFFI.TVMFFIErrorCreate(kind_bytes, msg_bytes, bt_bytes)
+            
+            if err_ret == 0 && err_handle != C_NULL
+                # SetRaised only sets TLS, doesn't take ownership
+                # We created the error, so we own it and must DecRef
+                LibTVMFFI.TVMFFIErrorSetRaised(err_handle)
+                LibTVMFFI.TVMFFIObjectDecRef(err_handle)
+            end
         end
         
         return -1
@@ -168,8 +173,14 @@ end
 """
 function get_global_func(name::AbstractString)
     name_str = String(name)
-    byte_array = LibTVMFFI.TVMFFIByteArray(pointer(name_str), sizeof(name_str))
-    ret, handle = LibTVMFFI.TVMFFIFunctionGetGlobal(byte_array)
+    
+    local ret, handle
+    GC.@preserve name_str begin
+        byte_array = LibTVMFFI.TVMFFIByteArray(
+            Ptr{UInt8}(pointer(name_str)), UInt(sizeof(name_str))
+        )
+        ret, handle = LibTVMFFI.TVMFFIFunctionGetGlobal(byte_array)
+    end
 
     if ret != 0
         # Check if error is "function not found" or something else
@@ -186,7 +197,6 @@ function get_global_func(name::AbstractString)
         return nothing
     end
 
-    # C API returns a new reference, so we take ownership without IncRef
     # C API returns a new reference, so we take ownership without IncRef
     return TVMFunction(handle; own = false)
 end
@@ -229,13 +239,18 @@ function register_global_func(name::AbstractString, func::Function; override::Bo
     
     # Register global
     name_str = String(name)
-    name_bytes = LibTVMFFI.TVMFFIByteArray(pointer(name_str), sizeof(name_str))
     
-    ret = LibTVMFFI.TVMFFIFunctionSetGlobal(name_bytes, func_handle, Int32(override))
+    local ret
+    GC.@preserve name_str begin
+        name_bytes = LibTVMFFI.TVMFFIByteArray(
+            Ptr{UInt8}(pointer(name_str)), UInt(sizeof(name_str))
+        )
+        ret = LibTVMFFI.TVMFFIFunctionSetGlobal(name_bytes, func_handle, Int32(override))
+    end
+    
     check_call(ret)
     
-    # We can DecRef the function handle now, as the global registry holds a reference
-    # AND the TVM global registry holds a reference.
+    # We can DecRef the function handle now, as TVM global registry holds a reference
     LibTVMFFI.TVMFFIObjectDecRef(func_handle)
     
     return nothing
@@ -336,9 +351,63 @@ function to_tvm_any(holder::DLTensorHolder)
 end
 
 """
+    from_tvm_any_borrowed(any::LibTVMFFI.TVMFFIAny) -> Any
+
+Convert TVMFFIAny to Julia value when the reference is borrowed (not owned).
+This is used in safe_call where C passes us views of arguments.
+We must increase refcount (own=true) to avoid double-free.
+"""
+function from_tvm_any_borrowed(any::LibTVMFFI.TVMFFIAny)
+    type_idx = any.type_index
+
+    if type_idx == Int32(LibTVMFFI.kTVMFFINone)
+        return nothing
+    elseif type_idx == Int32(LibTVMFFI.kTVMFFIInt)
+        return reinterpret(Int64, any.data)
+    elseif type_idx == Int32(LibTVMFFI.kTVMFFIBool)
+        return any.data != 0
+    elseif type_idx == Int32(LibTVMFFI.kTVMFFIFloat)
+        return reinterpret(Float64, any.data)
+    elseif type_idx == Int32(LibTVMFFI.kTVMFFIDevice)
+        device_type = Int32(any.data & 0xFFFFFFFF)
+        device_id = Int32((any.data >> 32) & 0xFFFFFFFF)
+        return DLDevice(device_type, device_id)
+    elseif type_idx == Int32(LibTVMFFI.kTVMFFIDataType)
+        code = UInt8(any.data & 0xFF)
+        bits = UInt8((any.data >> 8) & 0xFF)
+        lanes = UInt16((any.data >> 16) & 0xFFFF)
+        return DLDataType(code, bits, lanes)
+    elseif type_idx == Int32(LibTVMFFI.kTVMFFISmallStr) ||
+           type_idx == Int32(LibTVMFFI.kTVMFFIStr)
+        # CRITICAL: borrowed reference, must copy with own=true
+        return String(TVMString(any; own = true))
+    elseif type_idx == Int32(LibTVMFFI.kTVMFFISmallBytes) ||
+           type_idx == Int32(LibTVMFFI.kTVMFFIBytes)
+        # CRITICAL: borrowed reference, must copy with own=true
+        return Vector{UInt8}(TVMBytes(any; own = true))
+    elseif type_idx == Int32(LibTVMFFI.kTVMFFIFunction)
+        handle = reinterpret(LibTVMFFI.TVMFFIObjectHandle, any.data)
+        # CRITICAL: borrowed reference, must copy with own=true
+        return TVMFunction(handle; own = true)
+    elseif type_idx == Int32(LibTVMFFI.kTVMFFIError)
+        handle = reinterpret(LibTVMFFI.TVMFFIObjectHandle, any.data)
+        # CRITICAL: borrowed reference, must copy with own=true
+        return TVMError(handle; own = true)
+    elseif type_idx >= Int32(LibTVMFFI.kTVMFFIStaticObjectBegin)
+        # CRITICAL: borrowed reference, must copy with own=true
+        handle = reinterpret(LibTVMFFI.TVMFFIObjectHandle, any.data)
+        return TVMObject(handle; own = true)
+    else
+        error("Unsupported type index for conversion: $type_idx")
+    end
+end
+
+"""
     from_tvm_any(any::LibTVMFFI.TVMFFIAny) -> Any
 
-Convert TVMFFIAny back to Julia value.
+Convert TVMFFIAny back to Julia value when we own the reference.
+This is used when C API returns a new reference (e.g., function call results).
+We take ownership without IncRef (own=false).
 """
 function from_tvm_any(any::LibTVMFFI.TVMFFIAny)
     type_idx = any.type_index
