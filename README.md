@@ -154,14 +154,20 @@ Current test coverage: **84 tests** across:
 
 ## Examples
 
-See the `examples/` directory for more:
-- `test_version.jl` - Check C API version
-- `test_simple_lookup.jl` - Type system queries
-- `test_object_registration.jl` - Register custom objects
-- `list_types.jl` - Enumerate registered types
-- `test_function_registration.jl` - Basic function registration
-- `test_function_advanced.jl` - Advanced features (varargs, exceptions)
-- `test_existing_types.jl` - Query built-in types
+See the `examples/` directory for practical demonstrations:
+
+### Quick Start
+- **`basic_usage.jl`** - Comprehensive intro covering devices, dtypes, strings, errors
+
+### Advanced Features
+- **`list_types.jl`** - Explore registered TVM types (POD and Object types)
+- **`test_gc_safety.jl`** - GC safety stress test with aggressive allocation
+
+### Real-World Usage (requires compiled TVM modules)
+- **`load_add_one.jl`** - Load and call CPU module (full walkthrough)
+- **`load_add_one_cuda.jl`** - Load and call GPU module
+
+**Note**: Most functionality is comprehensively tested in `test/runtests.jl` (84 tests). Examples focus on end-to-end scenarios and educational walkthroughs.
 
 ## Architecture
 
