@@ -132,6 +132,88 @@ using TVMFFI.LibTVMFFI  # Import for internal constants
         @test func === nothing
     end
 
+    @testset "Function Registration" begin
+        # Test basic function registration
+        function test_add(x::Int64, y::Int64)
+            return x + y
+        end
+
+        register_global_func("julia.test.add", test_add)
+        func = get_global_func("julia.test.add")
+        @test func !== nothing
+        @test func(Int64(10), Int64(20)) == 30
+
+        # Test function with multiple types
+        function test_multiply(x::Int64, y::Float64)
+            return Float64(x) * y
+        end
+
+        register_global_func("julia.test.multiply", test_multiply)
+        func2 = get_global_func("julia.test.multiply")
+        result = func2(Int64(5), 3.0)
+        @test result ≈ 15.0
+
+        # Test function with boolean
+        function test_negate(b::Bool)
+            return !b
+        end
+
+        register_global_func("julia.test.negate", test_negate)
+        func3 = get_global_func("julia.test.negate")
+        @test func3(true) == false
+        @test func3(false) == true
+
+        # Test function returning nothing
+        function test_void()
+            return nothing
+        end
+
+        register_global_func("julia.test.void", test_void)
+        func4 = get_global_func("julia.test.void")
+        @test func4() === nothing
+
+        # Test varargs function
+        function test_sum(args...)
+            return sum(args)
+        end
+
+        register_global_func("julia.test.sum", test_sum; override=true)
+        func5 = get_global_func("julia.test.sum")
+        @test func5(Int64(1), Int64(2), Int64(3), Int64(4)) == 10
+
+        # Test exception handling
+        function test_error()
+            error("Test error!")
+        end
+
+        register_global_func("julia.test.error", test_error; override=true)
+        func6 = get_global_func("julia.test.error")
+        @test_throws TVMError func6()
+    end
+
+    @testset "Object Registration" begin
+        # Test basic type registration
+        struct TestObject1
+            x::Int
+        end
+
+        idx = register_object("julia.test.TestObject1", TestObject1)
+        @test idx > 0
+
+        # Verify we can look it up
+        idx2 = get_type_index("julia.test.TestObject1")
+        @test idx == idx2
+
+        # Test with different parent type
+        struct TestObject2
+            y::Float64
+        end
+
+        idx3 = register_object("julia.test.TestObject2", TestObject2; parent_type_index=Int32(64))
+        @test idx3 > 0
+        @test idx3 != idx
+    end
+
     @testset "DLTensorHolder - CPU Arrays" begin
         # Test creating holder from regular array
         x = Float32[1, 2, 3, 4, 5]
