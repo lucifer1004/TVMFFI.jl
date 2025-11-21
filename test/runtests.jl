@@ -353,6 +353,85 @@ using TVMFFI.LibTVMFFI  # Import for internal constants
         result = implements_function(mod, "nonexistent_function_12345", false)
         @test result isa Bool
     end
+
+    @testset "DLTensor Layout Verification" begin
+        # Verify struct sizes
+        @test sizeof(DLDevice) == 8
+        @test sizeof(DLDataType) == 4
+        
+        # Verify field offsets for 64-bit platform
+        if Sys.WORD_SIZE == 64
+            @test fieldoffset(DLTensor, 1) == 0   # data
+            @test fieldoffset(DLTensor, 2) == 8   # device
+            @test fieldoffset(DLTensor, 3) == 16  # ndim
+            @test fieldoffset(DLTensor, 4) == 20  # dtype
+            @test fieldoffset(DLTensor, 5) == 24  # shape
+            @test fieldoffset(DLTensor, 6) == 32  # strides
+            @test fieldoffset(DLTensor, 7) == 40  # byte_offset
+            @test sizeof(DLTensor) == 48
+        end
+        
+        # Test with actual tensor
+        x = Float32[1, 2, 3, 4, 5]
+        holder = from_julia_array(x)
+        @test holder.tensor.ndim == 1
+        @test holder.tensor.dtype.bits == 32
+        @test holder.tensor.device.device_type == Int32(LibTVMFFI.kDLCPU)
+    end
+
+    @testset "GC Safety Stress Test" begin
+        # Test that references survive aggressive GC
+        
+        # Test 1: String creation under GC pressure
+        all_strings_valid = true
+        for i in 1:100
+            s = TVMString("test string $i")
+            # Create garbage
+            _ = [rand(100) for _ in 1:10]
+            GC.gc()
+            # String should still be valid
+            if String(s) != "test string $i"
+                all_strings_valid = false
+                break
+            end
+        end
+        @test all_strings_valid
+        
+        # Test 2: Function registration under GC
+        all_funcs_work = true
+        for i in 1:50
+            func_name = "julia.gc_test_$i"
+            test_func = x -> x + i
+            register_global_func(func_name, test_func; override=true)
+            
+            # Trigger GC
+            _ = [rand(1000) for _ in 1:20]
+            GC.gc()
+            
+            # Retrieve and call
+            retrieved = get_global_func(func_name)
+            if retrieved === nothing || retrieved(Int64(10)) != 10 + i
+                all_funcs_work = false
+                break
+            end
+        end
+        @test all_funcs_work
+        
+        # Test 3: Object references under GC
+        all_modules_valid = true
+        for i in 1:50
+            mod = system_lib()
+            # Allocate garbage
+            _ = [TVMString("garbage $j") for j in 1:100]
+            GC.gc()
+            # Module should still be valid
+            if !(mod isa TVMModule) || get_module_kind(mod) != "library"
+                all_modules_valid = false
+                break
+            end
+        end
+        @test all_modules_valid
+    end
 end
 
 println("\n✓ All tests passed!")
