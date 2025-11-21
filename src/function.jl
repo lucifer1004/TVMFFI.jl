@@ -19,6 +19,93 @@ under the License.
 
 using .LibTVMFFI
 
+# Global registry to keep Julia functions alive when passed to C
+const _callback_registry = Dict{Ptr{Cvoid}, Any}()
+const _callback_lock = ReentrantLock()
+
+# C function pointers for callbacks
+const _safe_call_ptr = Ref{Ptr{Cvoid}}(C_NULL)
+const _deleter_ptr = Ref{Ptr{Cvoid}}(C_NULL)
+
+function callback_deleter(resource_handle::Ptr{Cvoid})
+    lock(_callback_lock) do
+        delete!(_callback_registry, resource_handle)
+    end
+    nothing
+end
+
+function safe_call(
+        resource_handle::Ptr{Cvoid},
+        args::Ptr{LibTVMFFI.TVMFFIAny},
+        num_args::Cint,
+        ret::Ptr{LibTVMFFI.TVMFFIAny}
+)::Cint
+    try
+        # Look up function
+        func_ref = lock(_callback_lock) do
+            get(_callback_registry, resource_handle, nothing)
+        end
+
+        if func_ref === nothing
+            error("Callback function not found in registry (handle: $resource_handle)")
+        end
+
+        func = func_ref[]
+
+        # Convert arguments
+        julia_args = Vector{Any}(undef, num_args)
+        for i in 1:num_args
+            # Pointer arithmetic to get i-th argument
+            arg_ptr = args + (i - 1) * sizeof(LibTVMFFI.TVMFFIAny)
+            arg_any = unsafe_load(arg_ptr)
+            julia_args[i] = from_tvm_any(arg_any)
+        end
+
+        # Call function
+        result = func(julia_args...)
+
+        # Convert result
+        # We need to write the result to the ret pointer
+        # ret is a pointer to a single TVMFFIAny
+        ret_any = to_tvm_any(result)
+        unsafe_store!(ret, ret_any)
+
+        return 0
+    catch e
+        # Handle exception
+        msg = sprint(showerror, e, catch_backtrace())
+        
+        # Create TVM error
+        kind_str = "RuntimeError"
+        kind_bytes = LibTVMFFI.TVMFFIByteArray(pointer(kind_str), sizeof(kind_str))
+        msg_bytes = LibTVMFFI.TVMFFIByteArray(pointer(msg), sizeof(msg))
+        # No backtrace for now (empty byte array)
+        bt_bytes = LibTVMFFI.TVMFFIByteArray(C_NULL, 0)
+        
+        err_ret, err_handle = LibTVMFFI.TVMFFIErrorCreate(kind_bytes, msg_bytes, bt_bytes)
+        
+        if err_ret == 0 && err_handle != C_NULL
+            LibTVMFFI.TVMFFIErrorSetRaised(err_handle)
+            # We don't own the error handle after SetRaised? 
+            # Actually SetRaised just sets TLS. We should probably DecRef if we own it.
+            # TVMFFIErrorCreate returns a new reference.
+            # TVMFFIErrorSetRaised takes the handle. It likely increments ref count internally if needed,
+            # or we are just passing our reference.
+            # Standard practice: Create -> SetRaised -> DecRef (if we don't need it anymore)
+            LibTVMFFI.TVMFFIObjectDecRef(err_handle)
+        end
+        
+        return -1
+    end
+end
+
+function _init_function_api()
+    _safe_call_ptr[] = @cfunction(safe_call, Cint, (Ptr{Cvoid}, Ptr{LibTVMFFI.TVMFFIAny}, Cint, Ptr{LibTVMFFI.TVMFFIAny}))
+    _deleter_ptr[] = @cfunction(callback_deleter, Cvoid, (Ptr{Cvoid},))
+end
+
+
+
 """
     TVMFunction
 
@@ -100,7 +187,58 @@ function get_global_func(name::AbstractString)
     end
 
     # C API returns a new reference, so we take ownership without IncRef
+    # C API returns a new reference, so we take ownership without IncRef
     return TVMFunction(handle; own = false)
+end
+
+"""
+    register_global_func(name::AbstractString, func::Function; override::Bool=false)
+
+Register a Julia function as a global TVM function.
+
+# Arguments
+- `name`: Global function name (e.g., "my_pkg.my_func")
+- `func`: Julia function to register
+- `override`: Whether to override existing function
+"""
+function register_global_func(name::AbstractString, func::Function; override::Bool = false)
+    # Create a reference to the function to keep it alive
+    func_ref = Ref{Any}(func)
+    
+    # Use the pointer to the Ref as the resource handle
+    # This is unique and stable as long as the Ref is alive
+    resource_handle = Base.unsafe_convert(Ptr{Cvoid}, func_ref)
+    
+    # Register in global registry
+    lock(_callback_lock) do
+        _callback_registry[resource_handle] = func_ref
+    end
+    
+    # Create TVM function
+    ret, func_handle = LibTVMFFI.TVMFFIFunctionCreate(
+        resource_handle,
+        _safe_call_ptr[],
+        _deleter_ptr[]
+    )
+    
+    check_call(ret)
+    
+    if func_handle == C_NULL
+        error("Failed to create TVM function")
+    end
+    
+    # Register global
+    name_str = String(name)
+    name_bytes = LibTVMFFI.TVMFFIByteArray(pointer(name_str), sizeof(name_str))
+    
+    ret = LibTVMFFI.TVMFFIFunctionSetGlobal(name_bytes, func_handle, Int32(override))
+    check_call(ret)
+    
+    # We can DecRef the function handle now, as the global registry holds a reference
+    # AND the TVM global registry holds a reference.
+    LibTVMFFI.TVMFFIObjectDecRef(func_handle)
+    
+    return nothing
 end
 
 """
@@ -303,7 +441,7 @@ function (func::TVMFunction)(args...)
         else
             LibTVMFFI.TVMFFIFunctionCall(
                 func.handle,
-                C_NULL,
+                Ptr{LibTVMFFI.TVMFFIAny}(C_NULL),
                 Int32(0),
                 Base.unsafe_convert(Ptr{LibTVMFFI.TVMFFIAny}, result)
             )

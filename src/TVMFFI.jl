@@ -54,7 +54,7 @@ export ValueError, TypeError, RuntimeError, AttributeError, KeyError, IndexError
 
 # Export utility functions
 export check_call, shape, dtype, device
-export get_global_func
+export get_global_func, register_global_func
 export to_julia_array, from_julia_array
 export cpu, cuda, opencl, vulkan, metal, rocm
 
@@ -82,6 +82,8 @@ include("module.jl")              # High-level module API
 function __init__()
     # Initialize module API (cache global functions)
     _init_module_api()
+    # Initialize function API (callbacks)
+    _init_function_api()
 end
 
 end # module
