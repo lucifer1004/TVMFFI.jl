@@ -98,14 +98,14 @@ mutable struct TVMError <: Exception
     end
 
     # Constructor from existing handle (e.g., from TLS)
-    # Note: Takes ownership without IncRef (handle is already owned by caller)
-    function TVMError(handle::LibTVMFFI.TVMFFIObjectHandle; own::Bool = false)
+    # Note: Takes ownership by default (borrowed=false) - C gave us the reference
+    function TVMError(handle::LibTVMFFI.TVMFFIObjectHandle; borrowed::Bool = false)
         if handle == C_NULL
             error("Cannot create TVMError from NULL handle")
         end
 
-        # Optionally increase reference count
-        if own
+        # Copy reference if borrowed
+        if borrowed
             LibTVMFFI.TVMFFIObjectIncRef(handle)
         end
 

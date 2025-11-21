@@ -45,8 +45,6 @@ Wrapper for TVM module objects.
 """
 struct TVMModule
     handle::TVMObject
-
-    TVMModule(obj::TVMObject) = new(obj)
 end
 
 """
@@ -149,8 +147,7 @@ function system_lib(symbol_prefix::AbstractString = "")
         error("ffi.SystemLib not found - system library support unavailable")
     end
     
-    mod_obj = system_lib_func(String(symbol_prefix))
-    return TVMModule(mod_obj)
+    return system_lib_func(String(symbol_prefix))
 end
 
 """

@@ -51,7 +51,7 @@ function Base.string(dtype::DLDataType)
     elseif any_result.type_index == Int32(LibTVMFFI.kTVMFFIStr)
         # Heap-allocated string object
         # Create TVMString with own=false to take ownership
-        tvmstr = TVMString(any_result; own = false)
+        tvmstr = TVMString(any_result; borrowed = false)
         return String(tvmstr)
     else
         error("Unexpected type index from TVMFFIDataTypeToString: $(any_result.type_index)")

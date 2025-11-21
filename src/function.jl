@@ -60,17 +60,31 @@ function safe_call(
             # Pointer arithmetic to get i-th argument
             arg_ptr = args + (i - 1) * sizeof(LibTVMFFI.TVMFFIAny)
             arg_any = unsafe_load(arg_ptr)
-            julia_args[i] = from_tvm_any_borrowed(arg_any)
+            # Borrowed reference from C callback
+            julia_args[i] = from_tvm_any(arg_any; borrowed=true)
         end
 
         # Call function
         result = func(julia_args...)
 
         # Convert result
-        # We need to write the result to the ret pointer
-        # ret is a pointer to a single TVMFFIAny
-        ret_any = to_tvm_any(result)
-        unsafe_store!(ret, ret_any)
+        # NOTE: For arrays, we need to keep the holder alive!
+        # Store it in a temporary registry that's cleared after C returns
+        result_holder = nothing
+        
+        ret_any = if result isa AbstractArray && !(result isa DLTensorHolder)
+            # Create holder and keep it alive
+            result_holder = from_julia_array(result)
+            to_tvm_any(result_holder)
+        else
+            to_tvm_any(result)
+        end
+        
+        # Write result to ret pointer
+        # CRITICAL: Must preserve result_holder during this store
+        GC.@preserve result_holder begin
+            unsafe_store!(ret, ret_any)
+        end
 
         return 0
     catch e
@@ -120,21 +134,23 @@ mutable struct TVMFunction
     handle::LibTVMFFI.TVMFFIObjectHandle
 
     """
-        TVMFunction(handle; own=true)
+        TVMFunction(handle; borrowed=true)
 
     Create a TVMFunction from a raw handle.
 
     # Arguments
     - `handle`: The raw function handle
-    - `own`: If true, increment refcount (default). If false, take ownership without IncRef.
+    - `borrowed`: Reference semantics
+      - `borrowed=true` (default): Borrowed reference, increment refcount (safe)
+      - `borrowed=false`: Owned reference, take without IncRef (C gave us ownership)
     """
-    function TVMFunction(handle::LibTVMFFI.TVMFFIObjectHandle; own::Bool = true)
+    function TVMFunction(handle::LibTVMFFI.TVMFFIObjectHandle; borrowed::Bool = true)
         if handle == C_NULL
             error("Cannot create TVMFunction from NULL handle")
         end
 
-        # Optionally increase reference count
-        if own
+        # Copy reference if borrowed
+        if borrowed
             LibTVMFFI.TVMFFIObjectIncRef(handle)
         end
 
@@ -186,7 +202,7 @@ function get_global_func(name::AbstractString)
         # Check if error is "function not found" or something else
         error_handle = LibTVMFFI.TVMFFIErrorMoveFromRaised()
         if error_handle != C_NULL
-            throw(TVMError(error_handle; own = false))  # C API transferred ownership
+            throw(TVMError(error_handle; borrowed = false))  # C API transferred ownership
         else
             # No error but non-zero return
             error("Failed to get global function '$name' with code $ret")
@@ -198,7 +214,7 @@ function get_global_func(name::AbstractString)
     end
 
     # C API returns a new reference, so we take ownership without IncRef
-    return TVMFunction(handle; own = false)
+    return TVMFunction(handle; borrowed = false)
 end
 
 """
@@ -350,66 +366,46 @@ function to_tvm_any(holder::DLTensorHolder)
     )
 end
 
-"""
-    from_tvm_any_borrowed(any::LibTVMFFI.TVMFFIAny) -> Any
-
-Convert TVMFFIAny to Julia value when the reference is borrowed (not owned).
-This is used in safe_call where C passes us views of arguments.
-We must increase refcount (own=true) to avoid double-free.
-"""
-function from_tvm_any_borrowed(any::LibTVMFFI.TVMFFIAny)
-    type_idx = any.type_index
-
-    if type_idx == Int32(LibTVMFFI.kTVMFFINone)
-        return nothing
-    elseif type_idx == Int32(LibTVMFFI.kTVMFFIInt)
-        return reinterpret(Int64, any.data)
-    elseif type_idx == Int32(LibTVMFFI.kTVMFFIBool)
-        return any.data != 0
-    elseif type_idx == Int32(LibTVMFFI.kTVMFFIFloat)
-        return reinterpret(Float64, any.data)
-    elseif type_idx == Int32(LibTVMFFI.kTVMFFIDevice)
-        device_type = Int32(any.data & 0xFFFFFFFF)
-        device_id = Int32((any.data >> 32) & 0xFFFFFFFF)
-        return DLDevice(device_type, device_id)
-    elseif type_idx == Int32(LibTVMFFI.kTVMFFIDataType)
-        code = UInt8(any.data & 0xFF)
-        bits = UInt8((any.data >> 8) & 0xFF)
-        lanes = UInt16((any.data >> 16) & 0xFFFF)
-        return DLDataType(code, bits, lanes)
-    elseif type_idx == Int32(LibTVMFFI.kTVMFFISmallStr) ||
-           type_idx == Int32(LibTVMFFI.kTVMFFIStr)
-        # CRITICAL: borrowed reference, must copy with own=true
-        return String(TVMString(any; own = true))
-    elseif type_idx == Int32(LibTVMFFI.kTVMFFISmallBytes) ||
-           type_idx == Int32(LibTVMFFI.kTVMFFIBytes)
-        # CRITICAL: borrowed reference, must copy with own=true
-        return Vector{UInt8}(TVMBytes(any; own = true))
-    elseif type_idx == Int32(LibTVMFFI.kTVMFFIFunction)
-        handle = reinterpret(LibTVMFFI.TVMFFIObjectHandle, any.data)
-        # CRITICAL: borrowed reference, must copy with own=true
-        return TVMFunction(handle; own = true)
-    elseif type_idx == Int32(LibTVMFFI.kTVMFFIError)
-        handle = reinterpret(LibTVMFFI.TVMFFIObjectHandle, any.data)
-        # CRITICAL: borrowed reference, must copy with own=true
-        return TVMError(handle; own = true)
-    elseif type_idx >= Int32(LibTVMFFI.kTVMFFIStaticObjectBegin)
-        # CRITICAL: borrowed reference, must copy with own=true
-        handle = reinterpret(LibTVMFFI.TVMFFIObjectHandle, any.data)
-        return TVMObject(handle; own = true)
-    else
-        error("Unsupported type index for conversion: $type_idx")
-    end
+function to_tvm_any(value::AbstractArray)
+    # Auto-convert array to DLTensorHolder then to Any
+    # This allows Julia functions to return arrays directly
+    holder = from_julia_array(value)
+    return to_tvm_any(holder)
 end
 
 """
-    from_tvm_any(any::LibTVMFFI.TVMFFIAny) -> Any
+    from_tvm_any(any::LibTVMFFI.TVMFFIAny; borrowed::Bool = false) -> Any
 
-Convert TVMFFIAny back to Julia value when we own the reference.
-This is used when C API returns a new reference (e.g., function call results).
-We take ownership without IncRef (own=false).
+Convert TVMFFIAny back to Julia value with configurable reference semantics.
+
+# Arguments
+- `any`: The TVMFFIAny value to convert
+- `borrowed`: Reference borrowing semantics
+  - `borrowed=false` (default): C gave us ownership, take it without IncRef
+  - `borrowed=true`: C lent us a reference, copy it with IncRef
+
+# Usage Patterns
+- **Function returns**: `from_tvm_any(result; borrowed=false)` - C gave us a new reference
+- **Callback arguments**: `from_tvm_any(arg; borrowed=true)` - C lent us a borrowed reference
+
+# Examples
+```julia
+# Pattern 1: Function return (we own the reference)
+result = func(x)
+value = from_tvm_any(result; borrowed=false)  # Take ownership
+
+# Pattern 2: Callback argument (we borrow the reference)
+function my_callback(arg_any)
+    value = from_tvm_any(arg_any; borrowed=true)  # Copy reference
+end
+```
+
+# Note
+The parameter name `borrowed` is clearer than `own` because:
+- `borrowed=true` → "This is borrowed, I must copy it" (clear!)
+- `own=true` → "I own it?" (ambiguous - sounds like taking ownership but actually copies)
 """
-function from_tvm_any(any::LibTVMFFI.TVMFFIAny)
+function from_tvm_any(any::LibTVMFFI.TVMFFIAny; borrowed::Bool = false)
     type_idx = any.type_index
 
     if type_idx == Int32(LibTVMFFI.kTVMFFINone)
@@ -429,28 +425,77 @@ function from_tvm_any(any::LibTVMFFI.TVMFFIAny)
         bits = UInt8((any.data >> 8) & 0xFF)
         lanes = UInt16((any.data >> 16) & 0xFFFF)
         return DLDataType(code, bits, lanes)
+    elseif type_idx == Int32(LibTVMFFI.kTVMFFIDLTensorPtr)
+        # DLTensor pointer - always copy data
+        # 
+        # WHY COPY? Because DLTensorPtr is just a pointer without ownership info.
+        # We don't know:
+        # - Who owns the memory (C or Julia)
+        # - When it will be freed
+        # - Whether it's safe to hold after this call
+        #
+        # Scenarios:
+        # 1. Borrowed (callback arg): C owns data, may free after return → MUST copy
+        # 2. Owned (our return): holder is local variable, freed after return → MUST copy
+        #
+        # For zero-copy, use TVMTensor objects (with refcounting) instead of raw pointers.
+        # But that requires different type_index and C understanding object lifecycle.
+        #
+        # Practical choice: Always copy. Safe and simple. Performance is acceptable
+        # for typical callback data sizes.
+        tensor_ptr = reinterpret(Ptr{DLTensor}, any.data)
+        if tensor_ptr == C_NULL
+            error("NULL DLTensor pointer in from_tvm_any")
+        end
+        dltensor = unsafe_load(tensor_ptr)
+        
+        # Copy data (MUST copy - pointer is temporary)
+        ndim = Int(dltensor.ndim)
+        shape_vec = unsafe_wrap(Array, dltensor.shape, ndim) |> copy
+        shape_tuple = Tuple(shape_vec)
+        
+        # Determine type
+        T = if dltensor.dtype.code == UInt8(LibTVMFFI.kDLFloat)
+            dltensor.dtype.bits == 32 ? Float32 : Float64
+        elseif dltensor.dtype.code == UInt8(LibTVMFFI.kDLInt)
+            dltensor.dtype.bits == 32 ? Int32 : Int64
+        else
+            error("Unsupported dtype in DLTensor")
+        end
+        
+        data_ptr = Ptr{T}(dltensor.data)
+        temp_arr = unsafe_wrap(Array, data_ptr, shape_tuple)
+        return copy(temp_arr)
     elseif type_idx == Int32(LibTVMFFI.kTVMFFISmallStr) ||
            type_idx == Int32(LibTVMFFI.kTVMFFIStr)
-        # Take ownership without extra IncRef
-        return String(TVMString(any; own = false))
+        return String(TVMString(any; borrowed = borrowed))
     elseif type_idx == Int32(LibTVMFFI.kTVMFFISmallBytes) ||
            type_idx == Int32(LibTVMFFI.kTVMFFIBytes)
-        # Take ownership without extra IncRef
-        return Vector{UInt8}(TVMBytes(any; own = false))
+        return Vector{UInt8}(TVMBytes(any; borrowed = borrowed))
     elseif type_idx == Int32(LibTVMFFI.kTVMFFIFunction)
         handle = reinterpret(LibTVMFFI.TVMFFIObjectHandle, any.data)
-        # Take ownership without extra IncRef
-        return TVMFunction(handle; own = false)
+        return TVMFunction(handle; borrowed = borrowed)
     elseif type_idx == Int32(LibTVMFFI.kTVMFFIError)
         handle = reinterpret(LibTVMFFI.TVMFFIObjectHandle, any.data)
-        # Take ownership without extra IncRef
-        return TVMError(handle; own = false)
-    elseif type_idx >= Int32(LibTVMFFI.kTVMFFIStaticObjectBegin)
-        # Generic object - take ownership without extra IncRef
+        return TVMError(handle; borrowed = borrowed)
+    elseif type_idx == Int32(LibTVMFFI.kTVMFFITensor)
+        # Tensor object (with refcounting)
         handle = reinterpret(LibTVMFFI.TVMFFIObjectHandle, any.data)
-        return TVMObject(handle; own = false)
+        return TVMTensor(handle; borrowed = borrowed)
+    elseif type_idx == Int32(LibTVMFFI.kTVMFFIModule)
+        # Module object
+        # TVMModule is a thin wrapper around TVMObject
+        handle = reinterpret(LibTVMFFI.TVMFFIObjectHandle, any.data)
+        return TVMModule(TVMObject(handle; borrowed = borrowed))
+    elseif type_idx == Int32(LibTVMFFI.kTVMFFIOpaquePtr)
+        # Opaque pointer - just return as Ptr{Cvoid}
+        return reinterpret(Ptr{Cvoid}, any.data)
+    elseif type_idx >= Int32(LibTVMFFI.kTVMFFIStaticObjectBegin)
+        # Generic object (covers Array, Map, Shape, etc.)
+        handle = reinterpret(LibTVMFFI.TVMFFIObjectHandle, any.data)
+        return TVMObject(handle; borrowed = borrowed)
     else
-        error("Unsupported type index for conversion: $type_idx")
+        error("Unsupported type index for conversion: $type_idx (add support if needed)")
     end
 end
 
@@ -520,7 +565,8 @@ function (func::TVMFunction)(args...)
     check_call(ret)
 
     # Convert result back to Julia type
-    julia_result = from_tvm_any(result[])
+    # Function return: C gives us ownership
+    julia_result = from_tvm_any(result[]; borrowed=false)
 
     # Cleanup: decrease ref counts for object arguments we created
     for arg_any in args_array
