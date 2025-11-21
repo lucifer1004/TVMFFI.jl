@@ -205,6 +205,25 @@ struct TVMFFIFunctionCell
     cpp_call::Ptr{Cvoid}   # Nullable C++ call pointer
 end
 
+"""
+    TVMFFITypeInfo
+
+Runtime type information for object type checking.
+Matches the C struct layout from c_api.h.
+"""
+struct TVMFFITypeInfo
+    type_index::Int32
+    type_depth::Int32
+    type_key::TVMFFIByteArray
+    type_ancestors::Ptr{Cvoid}  # const struct TVMFFITypeInfo**
+    type_key_hash::UInt64
+    num_fields::Int32
+    num_methods::Int32
+    fields::Ptr{Cvoid}  # const TVMFFIFieldInfo*
+    methods::Ptr{Cvoid}  # const TVMFFIMethodInfo*
+    metadata::Ptr{Cvoid}  # const TVMFFITypeMetadata*
+end
+
 # Section: Core C API functions
 
 """
@@ -328,6 +347,63 @@ function TVMFFIFunctionCreate(
         out_handle::Ptr{TVMFFIObjectHandle}
     )::Cint
     return ret, out_handle[]
+end
+
+"""
+    TVMFFITypeKeyToIndex(key) -> (Int32, Int32)
+
+Get type index from type key.
+"""
+function TVMFFITypeKeyToIndex(key::TVMFFIByteArray)
+    out_index = Ref{Int32}(0)
+    ret = @ccall libtvm_ffi.TVMFFITypeKeyToIndex(
+        key::Ref{TVMFFIByteArray}, out_index::Ptr{Int32})::Cint
+    return ret, out_index[]
+end
+
+"""
+    TVMFFITypeGetOrAllocIndex(key, static_type_index, type_depth, num_child_slots, 
+                              child_slots_can_overflow, parent_type_index) -> Int32
+
+Get type index from type key, allocating a new one if not found.
+Returns the type index directly (not an error code).
+
+# Arguments
+- `key`: The type key byte array
+- `static_type_index`: Static type index (use -1 for dynamic types)  
+- `type_depth`: Depth in type hierarchy
+- `num_child_slots`: Number of child type slots
+- `child_slots_can_overflow`: Whether child slots can overflow (0 or 1)
+- `parent_type_index`: Parent type index (use -1 for no parent)
+"""
+function TVMFFITypeGetOrAllocIndex(
+    key::TVMFFIByteArray,
+    static_type_index::Int32 = Int32(-1),
+    type_depth::Int32 = Int32(0),
+    num_child_slots::Int32 = Int32(0),
+    child_slots_can_overflow::Int32 = Int32(0),
+    parent_type_index::Int32 = Int32(-1)
+)
+    idx = @ccall libtvm_ffi.TVMFFITypeGetOrAllocIndex(
+        key::Ref{TVMFFIByteArray}, 
+        static_type_index::Int32,
+        type_depth::Int32,
+        num_child_slots::Int32,
+        child_slots_can_overflow::Int32,
+        parent_type_index::Int32
+    )::Int32
+    return idx
+end
+
+"""
+    TVMFFIGetTypeInfo(type_index::Int32) -> Ptr{TVMFFITypeInfo}
+
+Get type information by type index.
+Returns a pointer to the type info structure (owned by runtime, do not free).
+"""
+function TVMFFIGetTypeInfo(type_index::Int32)
+    ptr = @ccall libtvm_ffi.TVMFFIGetTypeInfo(type_index::Int32)::Ptr{TVMFFITypeInfo}
+    return ptr
 end
 
 """

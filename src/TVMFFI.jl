@@ -55,6 +55,7 @@ export ValueError, TypeError, RuntimeError, AttributeError, KeyError, IndexError
 # Export utility functions
 export check_call, shape, dtype, device
 export get_global_func, register_global_func
+export register_object, get_type_index
 export to_julia_array, from_julia_array
 export cpu, cuda, opencl, vulkan, metal, rocm
 
@@ -84,6 +85,8 @@ function __init__()
     _init_module_api()
     # Initialize function API (callbacks)
     _init_function_api()
+    # Initialize object API (type registry)
+    _init_object_api()
 end
 
 end # module
