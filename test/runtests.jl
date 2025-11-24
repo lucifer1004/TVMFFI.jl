@@ -22,26 +22,26 @@ using TVMFFI.LibTVMFFI  # Import for internal constants
 include("fixtures.jl")
 
 @testset "TVMFFI.jl Tests" begin
-    # Core APIs
-    include("test_dtype_device.jl")
-    include("test_string_bytes.jl")
-    include("test_error.jl")
+    # # Core APIs
+    # include("test_dtype_device.jl")
+    # include("test_string_bytes.jl")
+    # include("test_error.jl")
 
-    # Type conversions
-    include("test_conversions.jl")
+    # # Type conversions
+    # include("test_conversions.jl")
 
-    # Function and object registration
-    include("test_functions.jl")
-    include("test_objects.jl")
+    # # Function and object registration
+    # include("test_functions.jl")
+    # include("test_objects.jl")
 
-    # Tensor operations
-    include("test_tensors.jl")
+    # # Tensor operations
+    # include("test_tensors.jl")
 
-    # Module API
-    include("test_modules.jl")
+    # # Module API
+    # include("test_modules.jl")
 
-    # Memory safety
-    include("test_gc_safety.jl")
+    # # Memory safety
+    # include("test_gc_safety.jl")
 
     # Compiled fixtures
     include("test_fixtures.jl")

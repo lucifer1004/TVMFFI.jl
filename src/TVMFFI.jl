@@ -76,6 +76,7 @@ include("dtype.jl")
 include("device.jl")
 include("string.jl")
 include("object.jl")
+include("utils.jl")               # Internal utilities (_get_root_array, _navigate_to_root_module)
 include("tensor.jl")              # Defines DLTensor and basic conversions
 include("gpuarrays_support.jl")   # GPU abstraction (uses DLTensor, extends from_julia_array)
 include("function.jl")            # Defines TVMFunction

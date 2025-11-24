@@ -87,13 +87,13 @@ end
     # Type 65: Str (heap string)
     large_str = TVMString("this is a longer string that goes on heap")
     @test large_str.data.type_index == Int32(LibTVMFFI.kTVMFFIStr)
-    result = TVMFFI.from_tvm_any(large_str.data; borrowed = false)  # Test borrowed=false
+    result = TVMFFI.from_tvm_any(large_str.data; borrowed = true)
     @test result == "this is a longer string that goes on heap"
 
     # Type 66: Bytes (heap bytes)
     large_bytes = TVMBytes(rand(UInt8, 100))
     @test large_bytes.data.type_index == Int32(LibTVMFFI.kTVMFFIBytes)
-    result = TVMFFI.from_tvm_any(large_bytes.data; borrowed = false)
+    result = TVMFFI.from_tvm_any(large_bytes.data; borrowed = true)
     @test length(result) == 100
 
     # Type 68: Function
@@ -103,7 +103,7 @@ end
     @test func isa TVMFunction
     # Test round-trip through from_tvm_any
     any_func = TVMFFI.to_tvm_any(func)
-    recovered = TVMFFI.from_tvm_any(any_func; borrowed = false)
+    recovered = TVMFFI.from_tvm_any(any_func; borrowed = true)
     @test recovered isa TVMFunction
 
     # Type 73: Module

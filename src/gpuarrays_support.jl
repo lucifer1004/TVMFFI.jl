@@ -58,6 +58,7 @@ Map GPU backend name to DLDeviceType.
 """
 function gpu_backend_to_dldevice(backend::Symbol)
     backend_map = Dict(
+        :CPU => LibTVMFFI.kDLCPU,
         :CUDA => LibTVMFFI.kDLCUDA,
         :ROCm => LibTVMFFI.kDLROCM,
         :AMDGPU => LibTVMFFI.kDLROCM,  # AMDGPU.jl uses ROCm
@@ -75,7 +76,7 @@ function gpu_backend_to_dldevice(backend::Symbol)
 end
 
 """
-    detect_gpu_backend(arr) -> (Symbol, Int)
+    detect_backend(arr) -> (Symbol, Int)
 
 Detect GPU backend and device ID from a GPU array.
 
@@ -105,15 +106,15 @@ Robust: Unwrap array wrappers automatically
 using CUDA
 CUDA.device!(2)
 x = CUDA.CuArray([1, 2, 3])
-backend, dev_id = detect_gpu_backend(x)  # (:CUDA, 2)
+backend, dev_id = detect_backend(x)  # (:CUDA, 2)
 
 # Also works with wrapped arrays!
 using OffsetArrays
 y = OffsetArray(x, -1:1)
-backend, dev_id = detect_gpu_backend(y)  # (:CUDA, 2) - unwraps automatically
+backend, dev_id = detect_backend(y)  # (:CUDA, 2) - unwraps automatically
 ```
 """
-function detect_gpu_backend(arr)
+function detect_backend(arr)
     # Unwrap any array wrappers to get to the actual GPU array
     unwrapped = _get_root_array(arr)
 
@@ -138,10 +139,8 @@ function detect_gpu_backend(arr)
         return (:oneAPI, device_id)
 
     else
-        error(
-            "Cannot detect GPU backend from array type: $arr_type. " *
-            "If you're using a custom GPU array type, specify backend explicitly.",
-        )
+        # Assume CPU array
+        return (:CPU, 0)
     end
 end
 
@@ -381,112 +380,7 @@ end
 # ============================================================================
 # Internal Utilities
 # ============================================================================
-
-"""
-    _get_root_array(arr) -> AbstractArray
-
-Unwrap array wrappers to find the underlying root array.
-
-Design Philosophy (Linus-style):
-- Good taste: Use Julia's standard `parent()` interface
-- Simple: Recursively unwrap until we can't anymore
-- Handles all wrappers: OffsetArray, SubArray, ReshapedArray, etc.
-
-# Arguments
-- `arr`: Potentially wrapped array
-
-# Returns
-- `AbstractArray`: The unwrapped underlying array
-
-# Why This Matters
-GPU arrays are often wrapped by:
-- OffsetArrays.OffsetArray (custom indexing)
-- SubArray (views)
-- ReshapedArray (reshape)
-- PermutedDimsArray (permutedims)
-- ReinterpretArray (reinterpret)
-
-All these wrappers implement `parent()` to access the underlying array.
-
-# Examples
-```julia
-using CUDA, OffsetArrays
-
-x = CuArray([1, 2, 3])
-y = OffsetArray(x, -1:1)
-
-unwrapped = _get_root_array(y)  # Returns x (the CuArray)
-```
-"""
-function _get_root_array(arr)
-    current = arr
-
-    # Keep unwrapping while parent() gives us something different
-    while hasmethod(parent, Tuple{typeof(current)})
-        next = parent(current)
-        # Stop if parent() returns the same object (we've reached the bottom)
-        if next === current
-            break
-        end
-        current = next
-    end
-
-    return current
-end
-
-"""
-    _navigate_to_root_module(arr, target_module_name::Symbol) -> Module
-
-Navigate from an array's type to its root GPU package module.
-
-Design Philosophy (Linus-style):
-- Good taste: One function handles all GPU backends
-- Simple: Just walk up the module tree
-- No special cases: Same logic for CUDA, AMDGPU, oneAPI, Metal
-
-# Arguments
-- `arr`: GPU array object (will be unwrapped if it's a wrapper)
-- `target_module_name::Symbol`: Name of the root module to find (:CUDA, :AMDGPU, :oneAPI, :Metal)
-
-# Returns
-- `Module`: The root module of the GPU package
-
-# Algorithm
-1. Unwrap array wrappers to find the actual GPU array
-2. Start from `parentmodule(typeof(arr))`
-3. Walk up the module tree via repeated `parentmodule()` calls
-4. Stop when we reach a module with the target name OR the root (module is its own parent)
-
-# Examples
-```julia
-using CUDA
-x = CUDA.CuArray([1, 2, 3])
-cuda_module = _navigate_to_root_module(x, :CUDA)
-# Returns: CUDA module
-
-# Also works with wrappers!
-using OffsetArrays
-y = OffsetArray(x, -1:1)
-cuda_module = _navigate_to_root_module(y, :CUDA)  # Still returns CUDA module
-```
-"""
-function _navigate_to_root_module(arr, target_module_name::Symbol)
-    # First, unwrap any array wrappers
-    unwrapped = _get_root_array(arr)
-
-    arr_module = parentmodule(typeof(unwrapped))
-
-    # Walk up the module tree to find the root module
-    while parentmodule(arr_module) !== arr_module
-        arr_module = parentmodule(arr_module)
-        # Early exit if we found the target module
-        if nameof(arr_module) == target_module_name
-            break
-        end
-    end
-
-    return arr_module
-end
+# Note: _get_root_array and _navigate_to_root_module are now in utils.jl
 
 # ============================================================================
 # GPU Device ID Extraction
@@ -522,7 +416,7 @@ function from_julia_array(arr::S) where {S <: AbstractArray}
     T = eltype(arr)
 
     # Auto-detect backend and create GPU device
-    backend, device_id = detect_gpu_backend(arr)
+    backend, device_id = detect_backend(arr)
     dl_device_type = gpu_backend_to_dldevice(backend)
     device = DLDevice(Int32(dl_device_type), Int32(device_id))
 
@@ -532,16 +426,46 @@ function from_julia_array(arr::S) where {S <: AbstractArray}
 
     # Get dtype
     dt = DLDataType(T)
+    root_arr = _get_root_array(arr)
+    arr_ptr = try
+        pointer(arr)
+    catch
+        pointer(root_arr)
+    end
+    
+    # For Metal arrays, extract byte_offset from MtlPtr
+    # Other GPU backends use byte_offset = 0
+    byte_offset = UInt64(0)
+    element_size = sizeof(T)
+    if backend == :Metal
+        arr_type = typeof(arr)
+        if hasfield(arr_type, :offset)
+            base_offset = arr.offset
+            byte_offset = UInt64(base_offset) * element_size
+        else
+            root_arr = _get_root_array(arr)
+            if arr !== root_arr
+                # Calculate SubArray offset relative to root array
+                root_strides = Base.strides(root_arr)
+                first_indices = [first(ax) for ax in arr.indices]
+                
+                # Calculate offset: sum((first_index - 1) * stride * element_size)
+                subarray_offset = sum((first_indices[i] - 1) * root_strides[i] * element_size 
+                                        for i in 1:length(first_indices))
+                byte_offset = UInt64(subarray_offset)
+            end
+        end
+    end
 
     # Create DLTensor
     tensor = DLTensor(
-        pointer(arr),
+        arr_ptr,
         device,
         Int32(length(shape_vec)),
         dt,
         pointer(shape_vec),
         pointer(strides_vec),
-        UInt64(0)
+        byte_offset
     )
 
     return DLTensorHolder{T, S}(tensor, shape_vec, strides_vec, arr)
@@ -569,7 +493,7 @@ function gpu_array_info(arr)
     println("GPU Array Information:")
 
     try
-        backend, dev_id = detect_gpu_backend(arr)
+        backend, dev_id = detect_backend(arr)
         println("  Backend: $backend")
         println("  Device ID: $dev_id")
         println("  Element Type: ", eltype(arr))

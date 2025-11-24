@@ -18,6 +18,10 @@
 cmake_minimum_required(VERSION 3.20)
 project(tvmffi_test_fixtures LANGUAGES CXX)
 
+# Set C++ standard to C++17
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 # Optional CUDA support
 option(BUILD_CUDA_FIXTURES "Build CUDA test fixtures" ON)
 if(BUILD_CUDA_FIXTURES)
@@ -36,6 +40,27 @@ else()
   message(STATUS "CUDA fixtures disabled (BUILD_CUDA_FIXTURES=OFF)")
 endif()
 
+# Optional Metal support (macOS only)
+option(BUILD_METAL_FIXTURES "Build Metal test fixtures" ON)
+if(BUILD_METAL_FIXTURES AND APPLE)
+  # Check for Metal framework
+  find_library(METAL_FRAMEWORK Metal)
+  find_library(FOUNDATION_FRAMEWORK Foundation)
+  if(METAL_FRAMEWORK AND FOUNDATION_FRAMEWORK)
+    set(METAL_AVAILABLE TRUE)
+    message(STATUS "Metal support enabled")
+  else()
+    set(METAL_AVAILABLE FALSE)
+    message(STATUS "Metal framework not found, skipping Metal fixtures")
+  endif()
+elseif(BUILD_METAL_FIXTURES AND NOT APPLE)
+  set(METAL_AVAILABLE FALSE)
+  message(STATUS "Metal fixtures only available on macOS")
+else()
+  set(METAL_AVAILABLE FALSE)
+  message(STATUS "Metal fixtures disabled (BUILD_METAL_FIXTURES=OFF)")
+endif()
+
 # ============================================================================
 # Find Julia and get TVMFFI_jll paths
 # ============================================================================
@@ -46,7 +71,7 @@ message(STATUS "Found Julia: ${JULIA_EXECUTABLE}")
 
 # Get TVMFFI_jll artifact directory by running Julia
 execute_process(
-  COMMAND "${JULIA_EXECUTABLE}" --startup-file=no --project=.. -e 
+  COMMAND "${JULIA_EXECUTABLE}" --startup-file=no --project=${CMAKE_SOURCE_DIR}/.. -e 
     "using TVMFFI_jll; print(TVMFFI_jll.artifact_dir)"
   OUTPUT_VARIABLE TVMFFI_ARTIFACT_DIR
   OUTPUT_STRIP_TRAILING_WHITESPACE
@@ -125,7 +150,7 @@ else()
   set_target_properties(add_one_cpu PROPERTIES SUFFIX ".so")
 endif()
 
-# On Linux/macOS, set RPATH to find libtvm_ffi_shared.so at runtime
+# On Linux/macOS, set RPATH to find libtvm_ffi.so at runtime
 if(UNIX)
   set_target_properties(add_one_cpu PROPERTIES
     INSTALL_RPATH "${TVMFFI_LIB_DIR}"
@@ -208,5 +233,102 @@ if(CUDA_AVAILABLE)
   endif()
   
   message(STATUS "Configured fixture: add_one_cuda")
+endif()
+
+# ============================================================================
+# Optional Metal fixtures (macOS only)
+# ============================================================================
+
+if(METAL_AVAILABLE)
+  # Compile Metal Shading Language source to metallib
+  set(METAL_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/add_one_metal.metal")
+  set(METAL_LIB "${CMAKE_CURRENT_BINARY_DIR}/add_one_metal.metallib")
+  
+  # Find Metal compiler (xcrun -sdk macosx metal)
+  find_program(XCRUN xcrun)
+  if(XCRUN)
+    # Check if metal compiler is available
+    execute_process(
+      COMMAND ${XCRUN} -sdk macosx -find metal
+      OUTPUT_VARIABLE METAL_COMPILER
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+      ERROR_QUIET
+      RESULT_VARIABLE METAL_CHECK_RESULT
+    )
+    
+    if(METAL_CHECK_RESULT EQUAL 0 AND METAL_COMPILER)
+      # Metal compiler found, create compilation command
+      # Note: Do not use -c flag, as it generates incomplete library files
+      # that cannot be loaded by Metal runtime
+      add_custom_command(
+        OUTPUT "${METAL_LIB}"
+        COMMAND ${XCRUN} -sdk macosx metal "${METAL_SOURCE}" -o "${METAL_LIB}" -std=macos-metal2.0
+        DEPENDS "${METAL_SOURCE}"
+        COMMENT "Compiling Metal kernel to metallib"
+        VERBATIM
+      )
+      add_custom_target(add_one_metal_lib DEPENDS "${METAL_LIB}")
+      message(STATUS "Metal compiler found: ${METAL_COMPILER}")
+    else()
+      message(WARNING "Metal compiler not available. Metal fixture will be skipped.")
+      message(WARNING "To fix: Install Xcode Command Line Tools or run: xcode-select --install")
+      # Create a dummy target that always succeeds
+      add_custom_target(add_one_metal_lib
+        COMMAND ${CMAKE_COMMAND} -E echo "Skipping Metal library compilation - compiler not available"
+      )
+      set(METAL_AVAILABLE FALSE)
+    endif()
+  else()
+    message(WARNING "xcrun not found, Metal library compilation will be skipped")
+    message(WARNING "To fix: Install Xcode Command Line Tools or run: xcode-select --install")
+    # Create a dummy target
+    add_custom_target(add_one_metal_lib
+      COMMAND ${CMAKE_COMMAND} -E echo "Skipping Metal library compilation - xcrun not found"
+    )
+    set(METAL_AVAILABLE FALSE)
+  endif()
+  
+  # Build add_one_metal fixture (Objective-C++) only if Metal compiler is available
+  if(METAL_AVAILABLE)
+    # Build add_one_metal fixture (Objective-C++)
+    add_library(add_one_metal SHARED add_one_metal.mm)
+    
+    # Add include directories
+    target_include_directories(add_one_metal PRIVATE ${TVMFFI_INCLUDE_DIR})
+    
+    # Link against TVMFFI shared library and Metal framework
+    target_link_libraries(add_one_metal PRIVATE ${TVMFFI_SHARED_LIB})
+    target_link_libraries(add_one_metal PRIVATE ${METAL_FRAMEWORK})
+    target_link_libraries(add_one_metal PRIVATE ${FOUNDATION_FRAMEWORK})
+    
+    # Set Objective-C++ standard
+    set_target_properties(add_one_metal PROPERTIES
+      OBJCXX_STANDARD 17
+      OBJCXX_STANDARD_REQUIRED ON
+    )
+    
+    # Make sure Metal library is built before this target
+    add_dependencies(add_one_metal add_one_metal_lib)
+    
+    # Set output properties
+    set_target_properties(
+      add_one_metal
+      PROPERTIES 
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/"
+        PREFIX ""
+        SUFFIX ".dylib"
+    )
+    
+    # Set RPATH
+    set_target_properties(add_one_metal PROPERTIES
+      INSTALL_RPATH "${TVMFFI_LIB_DIR}"
+      BUILD_WITH_INSTALL_RPATH TRUE
+    )
+    
+    message(STATUS "Configured fixture: add_one_metal")
+  else()
+    message(STATUS "Metal fixture skipped - Metal compiler not available")
+  endif()
 endif()
 

@@ -54,14 +54,35 @@ function DLTensor(
         strides::Ptr{Int64},
         byte_offset::UInt64
 )
-    # Convert GPU pointers (CuPtr, etc.) to generic pointer
-    # by reinterpreting through UInt
+    # Convert GPU pointers (CuPtr, MtlPtr, etc.) to generic pointer
+    # Handle different pointer types:
+    # - Ptr: Standard Julia pointer, convert directly
+    # - isbits GPU pointers (CuPtr, ROCPtr): Use reinterpret
+    # - Non-isbits GPU pointers (MtlPtr): Extract via Metal.contents + offset
     ptr_as_uint = if data_ptr isa Ptr
         UInt(data_ptr)
-    else
-        # GPU pointer (CuPtr, ROCPtr, etc.)
-        # Get the raw pointer value
+    elseif isbitstype(typeof(data_ptr))
+        # GPU pointer that is isbits (CuPtr, ROCPtr, etc.)
+        # Get the raw pointer value via reinterpret
         reinterpret(UInt, data_ptr)
+    else
+        # Non-isbits GPU pointer (e.g., Metal.MtlPtr)
+        # Check if it's Metal.MtlPtr by checking field names
+        ptr_type = typeof(data_ptr)
+        if hasfield(ptr_type, :buffer) && hasfield(ptr_type, :offset)
+            # Metal.jl specific: MtlPtr{T} has buffer and offset fields
+            # For Metal, we need to pass the MTLBuffer object pointer, not the data pointer
+            # because Metal needs the buffer object to access metadata (size, storage mode, etc.)
+            buffer = getfield(data_ptr, :buffer)
+            # Extract MTLBuffer object pointer from buffer.ptr
+            mtl_buffer_obj = getfield(buffer, :ptr)
+            # Convert ObjectiveC.id to pointer value
+            # This will be reinterpreted as id<MTLBuffer> in C++ code
+            UInt(reinterpret(Ptr{Cvoid}, mtl_buffer_obj))
+        else
+            error("Unsupported GPU pointer type: $(ptr_type). " *
+                  "Expected Ptr, isbits GPU pointer, or Metal.MtlPtr")
+        end
     end
 
     # Convert to Ptr{Cvoid}
@@ -433,8 +454,10 @@ gpu_holder = from_julia_array(cuda_array)
 ```
 """
 function from_julia_array(
-        arr::Union{Array{T}, SubArray{T}},
+        arr::Union{Array{T}, SubArray{T, M, Array{T, N}}},
         device::DLDevice = cpu()
-) where {T}
+) where {T, M, N}
+    # Only handle CPU arrays - GPU arrays are handled by gpuarrays_support.jl
+    # SubArray{T, N, Array{T, N}} ensures the underlying array is CPU Array
     return DLTensorHolder(arr, device)
 end
