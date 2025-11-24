@@ -1,5 +1,9 @@
 # TVMFFI.jl
 
+[![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://lucifer1004.github.io/TVMFFI.jl/dev/)
+[![Build Status](https://github.com/lucifer1004/TVMFFI.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/lucifer1004/TVMFFI.jl/actions/workflows/CI.yml?query=branch%3Amain)
+[![Coverage](https://codecov.io/gh/lucifer1004/TVMFFI.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/lucifer1004/TVMFFI.jl)
+
 Julia bindings for the TVM (Tensor Virtual Machine) FFI (Foreign Function Interface).
 
 ## Features
@@ -32,16 +36,17 @@ TVMFFI.jl provides a complete, idiomatic Julia interface to TVM's C API:
 - **Module Export**: `write_to_file()` to save compiled modules
 - **Module Caching**: Efficient global function caching
 
-### 🔧 Optional/Future Enhancements
-- **Full Object Reflection**: Complete `@register_object` macro with field/method registration (only needed for advanced metaprogramming)
-- **Cross-language Tests**: Comparison tests against Python/Rust implementations (infrastructure is ready)
-
 ## Installation
 
 ```julia
-# From the workspace root
-cd TVMFFI
-julia --project=. -e 'using Pkg; Pkg.instantiate()'
+using Pkg
+Pkg.add("TVMFFI")
+```
+
+Or for the latest development version:
+
+```julia
+Pkg.add(url="https://github.com/lucifer1004/TVMFFI.jl")
 ```
 
 ## Quick Start
@@ -62,20 +67,35 @@ cuda_dev = cuda(0)
 # Data types
 dt = DLDataType(Float32)
 println(string(dt))  # "float32"
-
-# Strings and error handling
-s = TVMString("hello TVM")
-@assert String(s) == "hello TVM"
 ```
 
-### Calling TVM Functions
+### Working with Arrays (Zero-Copy)
 
 ```julia
-# Get a global function
-func = get_global_func("my_tvm_function")
-if func !== nothing
-    result = func(arg1, arg2)
-end
+# 1. CPU Arrays
+x = Float32[1, 2, 3, 4, 5]
+holder = from_julia_array(x)
+
+# 2. GPU Arrays (requires CUDA.jl, Metal.jl, etc.)
+# Automatically detects device type and handles pointers correctly
+using CUDA
+x_gpu = CuArray(Float32[1, 2, 3])
+holder_gpu = from_julia_array(x_gpu)
+
+# 3. Call TVM functions
+# Arrays are automatically converted to DLTensor
+result = some_tvm_func(x_gpu)
+```
+
+### Loading Modules
+
+```julia
+# Load a compiled module
+mod = load_module("path/to/module.so")
+
+# Get and call functions
+my_func = mod["function_name"]
+output = my_func(input1, input2)
 ```
 
 ### Registering Julia Functions
@@ -94,82 +114,11 @@ func = get_global_func("julia.my_add")
 result = func(Int64(10), Int64(20))  # Returns 30
 ```
 
-### Working with Arrays
+## Documentation
 
-```julia
-# Zero-copy array conversion
-x = Float32[1, 2, 3, 4, 5]
-holder = from_julia_array(x)
+For full API documentation, see [Documentation](https://lucifer1004.github.io/TVMFFI.jl/dev/).
 
-# Use in function calls (automatic conversion)
-result = some_tvm_func(x)  # Arrays auto-convert to DLTensorHolder
-```
-
-### Loading Modules
-
-```julia
-# Load a compiled module
-mod = load_module("path/to/module.so")
-
-# Get and call functions
-my_func = mod["function_name"]
-output = my_func(input1, input2)
-```
-
-### Custom Type Registration
-
-```julia
-# Define a custom type
-struct MyCustomType
-    value::Int
-end
-
-# Register it
-idx = register_object("my_package.MyCustomType", MyCustomType)
-
-# Look it up
-idx2 = get_type_index("my_package.MyCustomType")
-@assert idx == idx2
-```
-
-## Testing
-
-Run the comprehensive test suite:
-
-```julia
-using Pkg
-Pkg.test("TVMFFI")
-```
-
-Current test coverage: **84 tests** across:
-- Version API (6 tests)
-- Device creation (5 tests)
-- Data type handling (8 tests)
-- Data type handling  
-- String/Bytes operations
-- Error handling
-- Type conversions
-- Function registration and calls
-- Object registration
-- Tensor operations (CPU & GPU)
-- Module API
-
-## Examples
-
-See the `examples/` directory for practical demonstrations:
-
-### Quick Start
-- **`basic_usage.jl`** - Comprehensive intro covering devices, dtypes, strings, errors
-
-### Advanced Features
-- **`list_types.jl`** - Explore registered TVM types (POD and Object types)
-- **`test_gc_safety.jl`** - GC safety stress test with aggressive allocation
-
-### Real-World Usage (requires compiled TVM modules)
-- **`load_add_one.jl`** - Load and call CPU module (full walkthrough)
-- **`load_add_one_cuda.jl`** - Load and call GPU module
-
-**Note**: Most functionality is comprehensively tested in `test/runtests.jl` (84 tests). Examples focus on end-to-end scenarios and educational walkthroughs.
+- **[API Reference](https://lucifer1004.github.io/TVMFFI.jl/dev/api/)**: Complete list of exported functions and types.
 
 ## Architecture
 
@@ -177,19 +126,19 @@ See the `examples/` directory for practical demonstrations:
 TVMFFI/
 ├── src/
 │   ├── LibTVMFFI.jl          # Low-level C bindings
-│   ├── TVMFFI.jl              # Main module
-│   ├── device.jl              # Device abstractions
-│   ├── dtype.jl               # Data type handling
-│   ├── string.jl              # String/Bytes types
-│   ├── error.jl               # Error handling
-│   ├── object.jl              # Object system
-│   ├── tensor.jl              # DLTensor support
-│   ├── function.jl            # Function calls & registration
-│   ├── gpuarrays_support.jl   # GPU array integration
-│   └── module.jl              # Module loading
+│   ├── TVMFFI.jl             # Main module
+│   ├── device.jl             # Device abstractions
+│   ├── dtype.jl              # Data type handling
+│   ├── string.jl             # String/Bytes types
+│   ├── error.jl              # Error handling
+│   ├── object.jl             # Object system
+│   ├── tensor.jl             # DLTensor support
+│   ├── function.jl           # Function calls & registration
+│   ├── gpuarrays_support.jl  # GPU array integration
+│   └── module.jl             # Module loading
 ├── test/
-│   └── runtests.jl            # Comprehensive test suite
-└── examples/                  # Usage examples
+│   └── runtests.jl           # Comprehensive test suite
+└── examples/                 # Usage examples
 ```
 
 ## Design Philosophy
@@ -201,17 +150,7 @@ Following Linus Torvalds' principles:
 3. **Practical**: Solve real problems, not theoretical ones
 4. **Memory Safety**: Julia's GC + finalizers handle cleanup automatically
 
-## Status
-
-See [../STATUS.md](../STATUS.md) for detailed feature parity matrix with Python/Rust bindings.
-
-**Current State**: ✅ **Bidirectional** - Can both call TVM and extend TVM with Julia code.
-
-## Contributing
-
-See [AGENTS.md](AGENTS.md) for development workflow and guidelines.
 
 ## License
 
 Licensed under the Apache License 2.0. See the source file headers for details.
-

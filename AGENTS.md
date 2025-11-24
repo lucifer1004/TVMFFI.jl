@@ -52,11 +52,17 @@ Allow defining custom TVM objects in Julia.
 3.  ✅ **Module export**: `write_to_file()` for saving compiled modules.
 4.  ✅ **Function checking**: `implements_function()` to verify function availability.
 
+### Priority 4: Documentation ✅ COMPLETE
+1.  ✅ **Basic Structure**: `index.md` and `api.md` created.
+2.  ✅ **API Reference**: Comprehensive docstrings for exported types and functions.
+3.  ✅ **Examples**: Practical examples in `README.md` and `examples/` directory.
+
 ## Directory Structure
 -   `src/LibTVMFFI.jl`: Low-level C bindings (generated/maintained manually).
 -   `src/TVMFFI.jl`: Main entry point.
 -   `src/function.jl`: Function wrappers. **Focus here for Priority 1.**
 -   `src/object.jl`: Object wrappers. **Focus here for Priority 2.**
+-   `docs/`: Documentation source and build scripts.
 
 ---
 
