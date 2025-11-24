@@ -48,6 +48,7 @@ export TVMString, TVMBytes
 export TVMFunction
 export TVMTensor
 export TVMModule
+export TVMObject
 
 # Export error kinds
 export ValueError, TypeError, RuntimeError, AttributeError, KeyError, IndexError

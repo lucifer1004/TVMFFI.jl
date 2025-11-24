@@ -37,6 +37,11 @@ using TVMFFI_jll: libtvm_ffi
 # Section: Type definitions matching C API structures
 
 # DLPack types (from dlpack.h, used by TVM)
+"""
+    DLDeviceType
+
+Device type enum (CPU, CUDA, etc.) matching DLPack specification.
+"""
 @enum DLDeviceType::Int32 begin
     kDLCPU = 1
     kDLCUDA = 2
@@ -70,6 +75,11 @@ struct DLDevice
     device_id::Int32
 end
 
+"""
+    DLDataTypeCode
+
+Data type code enum (Int, UInt, Float, etc.) matching DLPack specification.
+"""
 @enum DLDataTypeCode::UInt8 begin
     kDLInt = 0
     kDLUInt = 1
