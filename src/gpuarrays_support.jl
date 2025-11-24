@@ -432,7 +432,7 @@ function from_julia_array(arr::S) where {S <: AbstractArray}
     catch
         pointer(root_arr)
     end
-    
+
     # For Metal arrays, extract byte_offset from MtlPtr
     # Other GPU backends use byte_offset = 0
     byte_offset = UInt64(0)
@@ -448,10 +448,11 @@ function from_julia_array(arr::S) where {S <: AbstractArray}
                 # Calculate SubArray offset relative to root array
                 root_strides = Base.strides(root_arr)
                 first_indices = [first(ax) for ax in arr.indices]
-                
+
                 # Calculate offset: sum((first_index - 1) * stride * element_size)
-                subarray_offset = sum((first_indices[i] - 1) * root_strides[i] * element_size 
-                                        for i in 1:length(first_indices))
+                subarray_offset = sum((first_indices[i] - 1) * root_strides[i] *
+                                      element_size
+                for i in 1:length(first_indices))
                 byte_offset = UInt64(subarray_offset)
             end
         end

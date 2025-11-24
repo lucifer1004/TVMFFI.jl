@@ -43,7 +43,9 @@ function ensure_fixture_built(name::String)
     # Run CMake (it will call Julia to find TVMFFI_jll)
     try
         # Suppress output for clean test logs
-        run(pipeline(`cmake $(FIXTURES_DIR) -B $(FIXTURES_BUILD_DIR) -DCMAKE_BUILD_TYPE=RelWithDebInfo`, devnull))
+        run(pipeline(
+            `cmake $(FIXTURES_DIR) -B $(FIXTURES_BUILD_DIR) -DCMAKE_BUILD_TYPE=RelWithDebInfo`,
+            devnull))
         run(pipeline(`cmake --build $(FIXTURES_BUILD_DIR) --config RelWithDebInfo`, devnull))
 
         # Copy to build/ for easy access
@@ -64,7 +66,7 @@ function ensure_fixture_built(name::String)
     catch e
         error("""
         Failed to build fixture '$name': $e
-        
+
         Requirements:
           • CMake (version ≥ 3.20)
           • C++ compiler (g++/clang++)

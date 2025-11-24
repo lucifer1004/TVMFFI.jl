@@ -125,7 +125,8 @@ end
 
     @testset "add_one_cuda - GPU Arrays (Optional)" begin
         if !CUDA_AVAILABLE
-            @test_skip "CUDA not available (skipping GPU tests)"
+            @info "CUDA tests skipped: CUDA not available"
+            @test_skip "CUDA not available"
         else
             # Load CUDA fixture
             mod = load_fixture("add_one_cuda")
@@ -161,14 +162,13 @@ end
             y_col = CUDA.similar(x_col)
             add_one_cuda(from_julia_array(x_col), from_julia_array(y_col))
             @test Array(y_col) ≈ Float32[3, 7, 11]
-
-            @info "✓ CUDA tests passed"
         end
     end
 
     @testset "add_one_metal - GPU Arrays (Optional)" begin
         if !METAL_AVAILABLE
-            @test_skip "Metal not available (skipping GPU tests)"
+            @info "Metal tests skipped: Metal not available"
+            @test_skip "Metal not available"
         else
             # Load Metal fixture
             mod = load_fixture("add_one_metal")

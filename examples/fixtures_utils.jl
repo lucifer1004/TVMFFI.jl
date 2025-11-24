@@ -38,7 +38,7 @@ module_loader = get_global_func("ffi.ModuleLoadFromFile")
 tvm_module = module_loader(path)
 ```
 """
-function ensure_fixture_built(name::String; verbose::Bool=true)
+function ensure_fixture_built(name::String; verbose::Bool = true)
     path = fixture_path(name)
 
     # Already built?
@@ -56,14 +56,16 @@ function ensure_fixture_built(name::String; verbose::Bool=true)
     try
         # Suppress output unless verbose
         redirect = verbose ? identity : pipeline
-        
+
         if verbose
             println("   → Running CMake configure...")
             run(`cmake $(FIXTURES_DIR) -B $(FIXTURES_BUILD_DIR) -DCMAKE_BUILD_TYPE=RelWithDebInfo`)
             println("   → Building...")
             run(`cmake --build $(FIXTURES_BUILD_DIR) --config RelWithDebInfo`)
         else
-            run(pipeline(`cmake $(FIXTURES_DIR) -B $(FIXTURES_BUILD_DIR) -DCMAKE_BUILD_TYPE=RelWithDebInfo`, devnull))
+            run(pipeline(
+                `cmake $(FIXTURES_DIR) -B $(FIXTURES_BUILD_DIR) -DCMAKE_BUILD_TYPE=RelWithDebInfo`,
+                devnull))
             run(pipeline(`cmake --build $(FIXTURES_BUILD_DIR) --config RelWithDebInfo`, devnull))
         end
 
@@ -85,7 +87,7 @@ function ensure_fixture_built(name::String; verbose::Bool=true)
     catch e
         error("""
         Failed to build fixture '$name': $e
-        
+
         Requirements:
           • CMake (version ≥ 3.20)
           • C++ compiler (g++/clang++)
@@ -115,15 +117,14 @@ add_one = get_function(tvm_module, "add_one_cpu")
 add_one(x, y)
 ```
 """
-function load_fixture(name::String; verbose::Bool=true)
-    path = ensure_fixture_built(name; verbose=verbose)
-    
+function load_fixture(name::String; verbose::Bool = true)
+    path = ensure_fixture_built(name; verbose = verbose)
+
     # Load using TVM FFI
     module_loader = get_global_func("ffi.ModuleLoadFromFile")
     if module_loader === nothing
         error("ffi.ModuleLoadFromFile not found! TVM FFI runtime may not be loaded correctly.")
     end
-    
+
     return module_loader(path)
 end
-

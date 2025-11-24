@@ -131,19 +131,19 @@ if has_metal
     println("=" ^ 70)
     println("Test 1: Simple 1D Vector")
     println("=" ^ 70)
-    
+
     x_metal = Metal.MtlArray(Float32[1, 2, 3, 4, 5])
     y_metal = Metal.zeros(Float32, 5)
 
     println("Input:  ", Array(x_metal))
     add_one_metal(x_metal, y_metal)
     Metal.synchronize()
-    
+
     result = Array(y_metal)
     expected = Float32[2, 3, 4, 5, 6]
     println("Output: ", result)
     println("Expected: ", expected)
-    
+
     if result ≈ expected
         println("✅ 1D vector passed")
     else
@@ -157,7 +157,7 @@ if has_metal
     println("\n" * "=" ^ 70)
     println("Test 2: 1D Strided View (stride=2)")
     println("=" ^ 70)
-    
+
     x_vec_metal = Metal.MtlArray(Float32[1, 2, 3, 4, 5, 6, 7, 8])
     y_vec_metal = Metal.zeros(Float32, 8)
     x_strided = @view x_vec_metal[1:2:end]  # [1, 3, 5, 7]
@@ -167,12 +167,12 @@ if has_metal
     println("Stride: ", Base.strides(x_strided))
     add_one_metal(x_strided, y_strided)
     Metal.synchronize()
-    
+
     result = Array(y_strided)
     expected = Float32[2, 4, 6, 8]
     println("Output: ", result)
     println("Expected: ", expected)
-    
+
     if result ≈ expected
         println("✅ Strided 1D passed")
     else
@@ -186,22 +186,22 @@ if has_metal
     println("\n" * "=" ^ 70)
     println("Test 3: 2D Matrix (Column-Major Layout)")
     println("=" ^ 70)
-    
+
     x_mat_metal = Metal.MtlArray(Float32[1 2 3; 4 5 6])  # 2×3
     y_mat_metal = Metal.similar(x_mat_metal)
 
     println("Input shape: ", size(x_mat_metal))
     println("Input strides: ", Base.strides(x_mat_metal))
     println("Input:\n", Array(x_mat_metal))
-    
+
     add_one_metal(x_mat_metal, y_mat_metal)
     Metal.synchronize()
-    
+
     result = Array(y_mat_metal)
     expected = Float32[2 3 4; 5 6 7]
     println("Output:\n", result)
     println("Expected:\n", expected)
-    
+
     if result ≈ expected
         println("✅ 2D matrix passed")
     else
@@ -216,22 +216,22 @@ if has_metal
     println("\n" * "=" ^ 70)
     println("Test 4: Column Slice (Contiguous in Column-Major)")
     println("=" ^ 70)
-    
+
     mat_metal = Metal.MtlArray(Float32[1 2 3 4; 5 6 7 8; 9 10 11 12])
     x_col = @view mat_metal[:, 2]  # [2, 6, 10]
     y_col = Metal.similar(x_col)
 
     println("Input column: ", Array(x_col))
     println("Stride: ", Base.strides(x_col), " (contiguous)")
-    
+
     add_one_metal(x_col, y_col)
     Metal.synchronize()
-    
+
     result = Array(y_col)
     expected = Float32[3, 7, 11]
     println("Output: ", result)
     println("Expected: ", expected)
-    
+
     if result ≈ expected
         println("✅ Column slice passed")
     else
@@ -245,21 +245,21 @@ if has_metal
     println("\n" * "=" ^ 70)
     println("Test 5: Row Slice (Non-Contiguous, Stride-Aware)")
     println("=" ^ 70)
-    
+
     x_row = @view mat_metal[2, :]  # [5, 6, 7, 8]
     y_row = Metal.similar(x_row)
 
     println("Input row: ", Array(x_row))
     println("Stride: ", Base.strides(x_row), " (non-contiguous!)")
-    
+
     add_one_metal(x_row, y_row)
     Metal.synchronize()
-    
+
     result = Array(y_row)
     expected = Float32[6, 7, 8, 9]
     println("Output: ", result)
     println("Expected: ", expected)
-    
+
     if result ≈ expected
         println("✅ Row slice passed (stride-aware!)")
     else
@@ -273,7 +273,7 @@ if has_metal
     println("\n" * "=" ^ 70)
     println("Test 6: 2D Sub-Matrix (Complex Strides)")
     println("=" ^ 70)
-    
+
     big_mat = Metal.MtlArray(Float32[1 2 3 4; 5 6 7 8; 9 10 11 12; 13 14 15 16])
     x_sub = @view big_mat[2:3, 2:3]  # 2×2 sub-matrix
     y_sub = Metal.similar(x_sub)
@@ -281,15 +281,15 @@ if has_metal
     println("Input shape: ", size(x_sub))
     println("Input strides: ", Base.strides(x_sub))
     println("Input:\n", Array(x_sub))
-    
+
     add_one_metal(x_sub, y_sub)
     Metal.synchronize()
-    
+
     result = Array(y_sub)
     expected = Float32[7 8; 11 12]
     println("Output:\n", result)
     println("Expected:\n", expected)
-    
+
     if result ≈ expected
         println("✅ 2D sub-matrix passed")
     else
@@ -344,4 +344,3 @@ else
     println("\nInstall Metal.jl to test stride-aware N-D Metal arrays:")
     println("   using Pkg; Pkg.add(\"Metal\")")
 end
-

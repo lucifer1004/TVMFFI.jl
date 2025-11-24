@@ -122,5 +122,3 @@ function _navigate_to_root_module(arr, target_module_name::Symbol)
 
     return arr_module
 end
-
-
