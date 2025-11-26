@@ -74,6 +74,11 @@ export write_to_file, inspect_source, get_module_kind, implements_function
 export supports_gpu_backend, list_available_gpu_backends
 export print_gpu_info, gpu_array_info
 
+# Re-export DLPack.from_dlpack for TVMTensor → Array conversion
+# TVMTensor(arr) constructor is available via TVMTensor export
+using DLPack: from_dlpack
+export from_dlpack
+
 # Include submodules in dependency order
 include("LibTVMFFI.jl")
 include("any.jl")                 # TVMAny/TVMAnyView - ownership-aware containers
@@ -88,6 +93,7 @@ include("gpuarrays_support.jl")   # GPU abstraction (extends TensorView construc
 include("function.jl")            # Defines TVMFunction
 include("module.jl")              # Defines TVMModule
 include("conversion.jl")          # ABI boundary - depends on all types above
+include("dlpack.jl")              # DLPack zero-copy tensor exchange
 
 # Module initialization
 function __init__()
@@ -97,6 +103,8 @@ function __init__()
     _init_function_api()
     # Initialize object API (type registry)
     _init_object_api()
+    # Initialize DLPack API (deleter function)
+    _init_dlpack_api()
 end
 
 """

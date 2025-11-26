@@ -173,6 +173,23 @@ function TVMAny(value::TVMModule)
     TVMAny(value.handle)
 end
 
+"""
+    TVMAny(value::TVMTensor)
+
+Create a TVMAny from a TVM tensor. Increments reference count.
+"""
+function TVMAny(value::TVMTensor)
+    if value.handle != C_NULL
+        LibTVMFFI.TVMFFIObjectIncRef(value.handle)
+    end
+    raw = LibTVMFFI.TVMFFIAny(
+        Int32(LibTVMFFI.kTVMFFITensor),
+        0,
+        reinterpret(UInt64, value.handle)
+    )
+    TVMAny(raw)  # Main constructor registers finalizer
+end
+
 # ---- TensorView Types (pointer-based, no refcounting) ----
 
 """

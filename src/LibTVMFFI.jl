@@ -648,4 +648,118 @@ function TVMFFIDLDeviceFromIntPair(device_type::Int32, device_id::Int32)
     DLDevice(device_type, device_id)
 end
 
+#------------------------------------------------------------
+# Section: DLPack Tensor APIs
+#------------------------------------------------------------
+
+"""
+    TVMFFITensorFromDLPack(from, require_alignment, require_contiguous) -> (Int32, TVMFFIObjectHandle)
+
+Create a managed Tensor from a DLManagedTensor (DLPack v0.x).
+The returned tensor takes ownership of the DLManagedTensor.
+
+# Arguments
+- `from`: Pointer to DLManagedTensor
+- `require_alignment`: Minimum alignment required (0 for no requirement)
+- `require_contiguous`: Whether to require contiguous memory (0 or 1)
+
+# Returns
+- `(return_code, tensor_handle)`: 0 on success, tensor handle
+"""
+function TVMFFITensorFromDLPack(
+    from::Ptr{Cvoid},
+    require_alignment::Int32,
+    require_contiguous::Int32
+)
+    out = Ref{TVMFFIObjectHandle}(C_NULL)
+    ret = @ccall libtvm_ffi.TVMFFITensorFromDLPack(
+        from::Ptr{Cvoid},
+        require_alignment::Int32,
+        require_contiguous::Int32,
+        out::Ptr{TVMFFIObjectHandle}
+    )::Cint
+    return ret, out[]
+end
+
+"""
+    TVMFFITensorToDLPack(from) -> (Int32, Ptr{Cvoid})
+
+Export a Tensor to DLManagedTensor (DLPack v0.x).
+The returned DLManagedTensor shares memory with the original tensor.
+
+# Arguments
+- `from`: Tensor object handle
+
+# Returns
+- `(return_code, dlpack_ptr)`: 0 on success, pointer to DLManagedTensor
+"""
+function TVMFFITensorToDLPack(from::TVMFFIObjectHandle)
+    out = Ref{Ptr{Cvoid}}(C_NULL)
+    ret = @ccall libtvm_ffi.TVMFFITensorToDLPack(
+        from::TVMFFIObjectHandle,
+        out::Ptr{Ptr{Cvoid}}
+    )::Cint
+    return ret, out[]
+end
+
+"""
+    TVMFFITensorFromDLPackVersioned(from, require_alignment, require_contiguous) -> (Int32, TVMFFIObjectHandle)
+
+Create a managed Tensor from a DLManagedTensorVersioned (DLPack v1.0+).
+The returned tensor takes ownership of the DLManagedTensorVersioned.
+
+# Arguments
+- `from`: Pointer to DLManagedTensorVersioned
+- `require_alignment`: Minimum alignment required (0 for no requirement)
+- `require_contiguous`: Whether to require contiguous memory (0 or 1)
+
+# Returns
+- `(return_code, tensor_handle)`: 0 on success, tensor handle
+"""
+function TVMFFITensorFromDLPackVersioned(
+    from::Ptr{Cvoid},
+    require_alignment::Int32,
+    require_contiguous::Int32
+)
+    out = Ref{TVMFFIObjectHandle}(C_NULL)
+    ret = @ccall libtvm_ffi.TVMFFITensorFromDLPackVersioned(
+        from::Ptr{Cvoid},
+        require_alignment::Int32,
+        require_contiguous::Int32,
+        out::Ptr{TVMFFIObjectHandle}
+    )::Cint
+    return ret, out[]
+end
+
+"""
+    TVMFFITensorToDLPackVersioned(from) -> (Int32, Ptr{Cvoid})
+
+Export a Tensor to DLManagedTensorVersioned (DLPack v1.0+).
+The returned DLManagedTensorVersioned shares memory with the original tensor.
+
+# Arguments
+- `from`: Tensor object handle
+
+# Returns
+- `(return_code, dlpack_ptr)`: 0 on success, pointer to DLManagedTensorVersioned
+"""
+function TVMFFITensorToDLPackVersioned(from::TVMFFIObjectHandle)
+    out = Ref{Ptr{Cvoid}}(C_NULL)
+    ret = @ccall libtvm_ffi.TVMFFITensorToDLPackVersioned(
+        from::TVMFFIObjectHandle,
+        out::Ptr{Ptr{Cvoid}}
+    )::Cint
+    return ret, out[]
+end
+
+"""
+    TVMFFITensorGetDLTensorPtr(obj::TVMFFIObjectHandle) -> Ptr{Cvoid}
+
+Get the DLTensor pointer from a Tensor object.
+The DLTensor is located immediately after the TVMFFIObject header.
+"""
+function TVMFFITensorGetDLTensorPtr(obj::TVMFFIObjectHandle)
+    Ptr{Cvoid}(obj + sizeof(TVMFFIObject))
+end
+
 end # module LibTVMFFI
