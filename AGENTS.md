@@ -268,7 +268,7 @@ Use proper data structures to avoid if/else chains:
 
 ```julia
 # Good: Unified handling via generic type parameter
-mutable struct DLTensorHolder{T, S}
+mutable struct TensorView{T, S}
     source::S  # Works for Array, CuArray, ROCArray, etc.
 end
 

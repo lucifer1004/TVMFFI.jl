@@ -21,17 +21,17 @@ register_global_func
 Base.getindex
 ```
 
-## Tensors & Data
+## TensorViews & Data
 
 Core data structures for exchanging data with TVM.
 
 ```@docs
-TVMTensor
+TVMTensorView
 shape
 dtype
 device
 to_julia_array
-DLTensorHolder
+TensorView
 dtype_to_julia_type
 DLDataType
 DLDataTypeCode
@@ -92,11 +92,11 @@ TVMErrorKind
 
 ## Low Level API
 
-Direct mappings to C API structures. Use `TVMTensor` and `TVMFunction` for high-level access.
+Direct mappings to C API structures. Use `TVMTensorView` and `TVMFunction` for high-level access.
 
 ```@docs
 DLTensor
-DLTensorHolder
+TensorView
 tvm_ffi_version
 TVMFFI.LibTVMFFI
 ```

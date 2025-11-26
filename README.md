@@ -4,7 +4,7 @@
 [![Build Status](https://github.com/lucifer1004/TVMFFI.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/lucifer1004/TVMFFI.jl/actions/workflows/CI.yml?query=branch%3Amain)
 [![Coverage](https://codecov.io/gh/lucifer1004/TVMFFI.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/lucifer1004/TVMFFI.jl)
 
-Julia bindings for the TVM (Tensor Virtual Machine) FFI (Foreign Function Interface).
+Julia bindings for the TVM (TensorView Virtual Machine) FFI (Foreign Function Interface).
 
 ## Features
 
@@ -13,7 +13,7 @@ TVMFFI.jl provides a complete, idiomatic Julia interface to TVM's C API:
 ### ✅ Core Functionality
 - **Device Management**: CPU, CUDA, OpenCL, Vulkan, Metal, ROCm support
 - **Data Types**: Full DLPack integration with automatic type conversion
-- **Zero-Copy Tensors**: Efficient data exchange via `DLTensorHolder`
+- **Zero-Copy TensorViews**: Efficient data exchange via `TensorView`
 - **Error Handling**: TVM errors automatically mapped to Julia exceptions
 - **Strings & Bytes**: Small string optimization, heap allocation for large strings
 
@@ -74,13 +74,13 @@ println(string(dt))  # "float32"
 ```julia
 # 1. CPU Arrays
 x = Float32[1, 2, 3, 4, 5]
-holder = DLTensorHolder(x)
+holder = TensorView(x)
 
 # 2. GPU Arrays (requires CUDA.jl, Metal.jl, etc.)
 # Automatically detects device type and handles pointers correctly
 using CUDA
 x_gpu = CuArray(Float32[1, 2, 3])
-holder_gpu = DLTensorHolder(x_gpu)
+holder_gpu = TensorView(x_gpu)
 
 # 3. Call TVM functions
 # Arrays are automatically converted to DLTensor

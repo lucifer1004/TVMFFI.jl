@@ -357,27 +357,39 @@ function Base.summary(io::IO, tensor::TVMTensor)
 end
 
 """
-    DLTensorHolder{T, S}
+    TensorView{T, S}
 
-Self-contained DLTensor holder with automatic lifetime management.
+A view into a Julia array as a DLTensor, without owning the data.
 
+Wraps a DLTensor structure and manages the lifetime of shape/strides arrays.
 Works for both CPU and GPU arrays, including slices (SubArray).
 
 # Fields
-- `tensor::DLTensor`: DLPack tensor structure
+- `dltensor::DLTensor`: DLPack tensor structure
 - `shape::Vector{Int64}`: Shape array
 - `strides::Vector{Int64}`: Strides array
 - `source::S`: Source array (Array, CuArray, SubArray, etc.)
+
+# Examples
+```julia
+# From CPU array
+arr = rand(Float32, 3, 4)
+view = TensorView(arr)
+
+# From GPU array (requires CUDA.jl)
+# cu_arr = CUDA.rand(Float32, 3, 4)
+# view = TensorView(cu_arr)
+```
 """
-mutable struct DLTensorHolder{T, S}
-    tensor::DLTensor
+mutable struct TensorView{T, S}
+    dltensor::DLTensor
     shape::Vector{Int64}
     strides::Vector{Int64}
     source::S  # Can be any array type (CPU or GPU)
 end
 
 # Outer constructor for CPU arrays
-function DLTensorHolder(
+function TensorView(
         arr::Union{Array{T}, SubArray{T}},
         device::DLDevice = cpu()
 ) where {T}
@@ -400,7 +412,7 @@ function DLTensorHolder(
     dt = DLDataType(T)
 
     # Create DLTensor
-    tensor = DLTensor(
+    dltensor = DLTensor(
         data_ptr,
         device,
         Int32(ndim),
@@ -410,26 +422,26 @@ function DLTensorHolder(
         byte_offset
     )
 
-    return DLTensorHolder{T, typeof(arr)}(tensor, shape_vec, strides_vec, arr)
+    return TensorView{T, typeof(arr)}(dltensor, shape_vec, strides_vec, arr)
 end
 
 """
-    Base.Ref(holder::DLTensorHolder) -> Ref{DLTensor}
+    Base.Ref(view::TensorView) -> Ref{DLTensor}
 
-Get a reference to the tensor for passing to C functions.
-The holder keeps all data alive.
+Get a reference to the underlying DLTensor for passing to C functions.
+The TensorView keeps all data alive.
 """
-Base.Ref(holder::DLTensorHolder) = Ref(holder.tensor)
+Base.Ref(view::TensorView) = Ref(view.dltensor)
 
 """
-    Base.unsafe_convert(::Type{Ptr{DLTensor}}, holder::DLTensorHolder)
+    Base.unsafe_convert(::Type{Ptr{DLTensor}}, view::TensorView)
 
-Convert holder to pointer for C calls.
+Convert TensorView to pointer for C calls.
 This is called automatically by ccall.
 """
-function Base.unsafe_convert(::Type{Ptr{DLTensor}}, holder::DLTensorHolder)
-    # Get pointer to the tensor field within the holder
-    # The tensor is the first field, so we can get its address
-    return Ptr{DLTensor}(pointer_from_objref(holder))
+function Base.unsafe_convert(::Type{Ptr{DLTensor}}, view::TensorView)
+    # Get pointer to the dltensor field within the TensorView
+    # The dltensor is the first field, so we can get its address
+    return Ptr{DLTensor}(pointer_from_objref(view))
 end
 

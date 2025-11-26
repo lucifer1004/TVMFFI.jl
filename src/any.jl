@@ -244,7 +244,7 @@ function copy_value end
 # TVMAny(::TVMModule)
 
 # Array types
-# TVMAny(::DLTensorHolder)
+# TVMAny(::TensorView)
 # TVMAny(::AbstractArray)
 
 # String convenience

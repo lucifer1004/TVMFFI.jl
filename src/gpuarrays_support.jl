@@ -37,11 +37,11 @@ using CUDA  # or AMDGPU, Metal, oneAPI
 # Works with any GPU backend!
 x_gpu = CUDA.CuArray(Float32[1, 2, 3])
 
-# Unified API - from_julia_array auto-detects device
-x_holder = from_julia_array(x_gpu)
+# Unified API - TensorView constructor auto-detects device
+x_view = TensorView(x_gpu)
 
 # Call TVM function
-tvm_func(x_holder, y_holder)
+tvm_func(x_view, y_view)
 ```
 """
 
@@ -246,7 +246,7 @@ function _extract_oneapi_device_id(arr)
 end
 
 # Deleted from_gpu_array - it's redundant!
-# from_julia_array handles GPU arrays automatically.
+# TensorView constructor handles GPU arrays automatically.
 
 """
     supports_gpu_backend(backend::Symbol) -> Bool
@@ -386,31 +386,31 @@ end
 # GPU Device ID Extraction
 # ============================================================================
 
-# Extend from_julia_array to handle GPU arrays
+# Extend TensorView constructor to handle GPU arrays
 """
-    from_julia_array(arr::AbstractArray)
+    TensorView(arr::AbstractArray)
 
-Extended method for GPU arrays - uses same DLTensorHolder as CPU!
+Construct a TensorView from any AbstractArray, including GPU arrays.
 
 # Design Philosophy (Linus-style)
 ONE constructor, ONE type, ALL devices.
 - Auto-detect GPU backend from array type
 - Create appropriate device automatically
-- Return unified DLTensorHolder
+- Return unified TensorView
 
 # Examples
 ```julia
 using CUDA
 
 # CPU and GPU - same API!
-cpu_holder = DLTensorHolder(cpu_arr)     # Auto: CPU device
-gpu_holder = DLTensorHolder(gpu_arr)     # Auto: CUDA device
+cpu_view = TensorView(cpu_arr)     # Auto: CPU device
+gpu_view = TensorView(gpu_arr)     # Auto: CUDA device
 
-# Both return DLTensorHolder{T, S}
-# Device info is in holder.tensor.device
+# Both return TensorView{T, S}
+# Device info is in view.dltensor.device
 ```
 """
-function DLTensorHolder(arr::S) where {S <: AbstractArray}
+function TensorView(arr::S) where {S <: AbstractArray}
     T = eltype(arr)
 
     # Auto-detect backend and create GPU device
@@ -457,7 +457,7 @@ function DLTensorHolder(arr::S) where {S <: AbstractArray}
     end
 
     # Create DLTensor
-    tensor = DLTensor(
+    dltensor = DLTensor(
         arr_ptr,
         device,
         Int32(length(shape_vec)),
@@ -467,7 +467,7 @@ function DLTensorHolder(arr::S) where {S <: AbstractArray}
         byte_offset
     )
 
-    return DLTensorHolder{T, S}(tensor, shape_vec, strides_vec, arr)
+    return TensorView{T, S}(dltensor, shape_vec, strides_vec, arr)
 end
 
 """

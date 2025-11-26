@@ -231,15 +231,15 @@ end
     @test result == "test view to owned"
 end
 
-@testset "TVMAny with DLTensorHolder" begin
-    # Test TVMAny with DLTensorHolder
+@testset "TVMAny with TensorView" begin
+    # Test TVMAny with TensorView
     arr = Float32[1.0, 2.0, 3.0, 4.0]
-    holder = DLTensorHolder(arr)
-    any = TVMAny(holder)
+    view = TensorView(arr)
+    any = TVMAny(view)
     @test TVMFFI.type_index(any) == Int32(LibTVMFFI.kTVMFFIDLTensorPtr)
     
     # Note: can't use take_value for DLTensorPtr since we don't own the data
-    # The holder owns it
+    # The view owns it
 end
 
 @testset "TVMAnyView Display" begin

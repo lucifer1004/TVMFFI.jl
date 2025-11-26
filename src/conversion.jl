@@ -173,7 +173,7 @@ function TVMAny(value::TVMModule)
     TVMAny(value.handle)
 end
 
-# ---- Tensor Types (pointer-based, no refcounting) ----
+# ---- TensorView Types (pointer-based, no refcounting) ----
 
 """
     TVMAny(value::Base.RefValue{DLTensor})
@@ -190,14 +190,14 @@ function TVMAny(value::Base.RefValue{DLTensor})
 end
 
 """
-    TVMAny(holder::DLTensorHolder)
+    TVMAny(view::TensorView)
 
-Create a TVMAny from a DLTensorHolder.
+Create a TVMAny from a TensorView.
 
-Note: The holder must be kept alive while this TVMAny is used!
+Note: The TensorView must be kept alive while this TVMAny is used!
 """
-function TVMAny(holder::DLTensorHolder)
-    tensor_ptr = Base.unsafe_convert(Ptr{DLTensor}, holder)
+function TVMAny(view::TensorView)
+    tensor_ptr = Base.unsafe_convert(Ptr{DLTensor}, view)
     raw = LibTVMFFI.TVMFFIAny(
         Int32(LibTVMFFI.kTVMFFIDLTensorPtr),
         0,
@@ -209,14 +209,14 @@ end
 """
     TVMAny(value::AbstractArray)
 
-Create a TVMAny from a Julia array (converts to DLTensorHolder first).
+Create a TVMAny from a Julia array (converts to TensorView first).
 
-Note: Returns a tuple (any, holder) - the holder must be kept alive!
+Note: Returns a tuple (any, view) - the view must be kept alive!
 """
 function TVMAny(value::AbstractArray)
-    holder = DLTensorHolder(value)
-    any = TVMAny(holder)
-    return any, holder  # Caller must GC.@preserve holder
+    view = TensorView(value)
+    any = TVMAny(view)
+    return any, view  # Caller must GC.@preserve view
 end
 
 #=============================================================================
@@ -326,7 +326,7 @@ function _extract_value(any::LibTVMFFI.TVMFFIAny, borrowed::Bool)
         #
         # Scenarios:
         # 1. Borrowed (callback arg): C owns data, may free after return → MUST copy
-        # 2. Owned (our return): holder is local variable, freed after return → MUST copy
+        # 2. Owned (our return): view is local variable, freed after return → MUST copy
         #
         # For zero-copy, use TVMTensor objects (with refcounting) instead of raw pointers.
         # But that requires different type_index and C understanding object lifecycle.

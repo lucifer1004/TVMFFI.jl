@@ -82,8 +82,8 @@ end
 
     # Test with actual tensor
     x = Float32[1, 2, 3, 4, 5]
-    holder = DLTensorHolder(x)
-    @test holder.tensor.ndim == 1
-    @test holder.tensor.dtype.bits == 32
-    @test holder.tensor.device.device_type == Int32(LibTVMFFI.kDLCPU)
+    view = TensorView(x)
+    @test view.dltensor.ndim == 1
+    @test view.dltensor.dtype.bits == 32
+    @test view.dltensor.device.device_type == Int32(LibTVMFFI.kDLCPU)
 end

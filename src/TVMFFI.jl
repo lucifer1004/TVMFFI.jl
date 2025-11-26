@@ -42,7 +42,7 @@ module TVMFFI
 
 # Export core types
 export DLDevice, DLDataType, DLDeviceType, DLDataTypeCode
-export DLTensor, DLTensorHolder
+export DLTensor, TensorView
 export TVMError, TVMErrorKind
 export TVMString, TVMBytes
 export TVMFunction
@@ -70,7 +70,7 @@ export load_module, get_function, system_lib
 export write_to_file, inspect_source, get_module_kind, implements_function
 
 # Export GPU support functions
-# Note: DLTensorHolder(arr) handles both CPU and GPU arrays!
+# Note: TensorView(arr) handles both CPU and GPU arrays!
 export supports_gpu_backend, list_available_gpu_backends
 export print_gpu_info, gpu_array_info
 
@@ -83,8 +83,8 @@ include("device.jl")
 include("string.jl")
 include("object.jl")
 include("utils.jl")               # Internal utilities (_get_root_array, _navigate_to_root_module)
-include("tensor.jl")              # Defines DLTensor and basic conversions
-include("gpuarrays_support.jl")   # GPU abstraction (uses DLTensor, extends from_julia_array)
+include("tensor.jl")              # Defines DLTensor, TensorView and basic conversions
+include("gpuarrays_support.jl")   # GPU abstraction (extends TensorView constructor)
 include("function.jl")            # Defines TVMFunction
 include("module.jl")              # Defines TVMModule
 include("conversion.jl")          # ABI boundary - depends on all types above

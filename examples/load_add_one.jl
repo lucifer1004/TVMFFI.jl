@@ -92,9 +92,9 @@ println("   Input (x):  ", x)
 println("   Output (y): ", y)
 
 # NEW: Direct array passing! (Auto-conversion)
-# Arrays are automatically converted to DLTensorHolder
+# Arrays are automatically converted to TensorView
 println("\n5. Calling add_one_cpu(x, y) - direct array passing!")
-println("   (Arrays auto-converted to holders internally)")
+println("   (Arrays auto-converted to views internally)")
 try
     add_one_cpu(x, y)  # ← Pass arrays directly!
     println("✓ Function call succeeded!")
@@ -138,7 +138,7 @@ slice_output = zeros(Float32, 5)
 println("   Input slice:  ", slice)
 println("   Stride: ", Base.strides(slice), " (contiguous)")
 
-# NEW: Direct slice passing! Auto-converted to holder
+# NEW: Direct slice passing! Auto-converted to view
 add_one_cpu(slice, slice_output)  # ← Pass slices directly!
 
 println("   Output:       ", slice_output)
@@ -331,7 +331,7 @@ println("  • ✅ Contiguous slices: Full zero-copy support")
 println("  • ✅ Column slices: Contiguous in column-major layout")
 println("  • ✅ Row slices: Non-contiguous, stride-aware kernel handles it!")
 println("  • ✅ Strided views: Arbitrary strides supported (e.g., arr[::2])")
-println("  • ✅ Safe: Holders keep parent arrays alive")
+println("  • ✅ Safe: views keep parent arrays alive")
 println("  • ✅ Multi-dimensional: Handles any number of dimensions (1D, 2D, 3D, 4D, 5D+)")
 println("  • ✅ High-dimensional slices: Works with slices from N-D arrays")
 

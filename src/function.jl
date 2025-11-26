@@ -69,20 +69,20 @@ function safe_call(
         result = func(julia_args...)
 
         # Convert result to TVMAny
-        # NOTE: For arrays, TVMAny(array) returns (any, holder) tuple
-        # The holder must be kept alive during the store
-        result_holder = nothing
-        result_any = if result isa AbstractArray && !(result isa DLTensorHolder)
-            # Create holder and TVMAny
-            result_holder = DLTensorHolder(result)
-            TVMAny(result_holder)
+        # NOTE: For arrays, TVMAny(array) returns (any, view) tuple
+        # The view must be kept alive during the store
+        result_view = nothing
+        result_any = if result isa AbstractArray && !(result isa TensorView)
+            # Create view and TVMAny
+            result_view = TensorView(result)
+            TVMAny(result_view)
         else
             TVMAny(result)
         end
 
         # Write result to ret pointer
-        # CRITICAL: Must preserve result_holder during this store
-        GC.@preserve result_holder result_any begin
+        # CRITICAL: Must preserve result_view during this store
+        GC.@preserve result_view result_any begin
             unsafe_store!(ret, raw_data(result_any))
         end
 
@@ -278,18 +278,18 @@ end
 
 Call a TVM function with arguments.
 
-Arrays are automatically converted to DLTensorHolder for convenience.
-Pre-created holders can be passed for performance optimization.
+Arrays are automatically converted to TensorView for convenience.
+Pre-created views can be passed for performance optimization.
 
 # Examples
 ```julia
 # Simple - auto-conversion
 func(x, y)
 
-# Optimized - reuse holders
-holder = DLTensorHolder(x)
+# Optimized - reuse views
+view = TensorView(x)
 for i in 1:1000000
-    func(holder)
+    func(view)
 end
 ```
 """
@@ -297,21 +297,21 @@ function (func::TVMFunction)(args...)
     num_args = length(args)
     
     # Convert arguments to TVMAny
-    # Arrays need special handling - they return (any, holder) tuples
+    # Arrays need special handling - they return (any, view) tuples
     args_any = Vector{TVMAny}(undef, num_args)
-    holders = Vector{Any}(undef, num_args)  # Keep holders alive
+    views = Vector{Any}(undef, num_args)  # Keep views alive
     
     for (i, arg) in enumerate(args)
-        if arg isa AbstractArray && !(arg isa DLTensorHolder)
-            holder = DLTensorHolder(arg)
-            args_any[i] = TVMAny(holder)
-            holders[i] = holder  # Keep holder alive
-        elseif arg isa DLTensorHolder
+        if arg isa AbstractArray && !(arg isa TensorView)
+            view = TensorView(arg)
+            args_any[i] = TVMAny(view)
+            views[i] = view  # Keep view alive
+        elseif arg isa TensorView
             args_any[i] = TVMAny(arg)
-            holders[i] = arg  # Keep holder alive
+            views[i] = arg  # Keep view alive
         else
             args_any[i] = TVMAny(arg)
-            holders[i] = nothing
+            views[i] = nothing
         end
     end
     
@@ -322,11 +322,11 @@ function (func::TVMFunction)(args...)
     result = Ref{LibTVMFFI.TVMFFIAny}(LibTVMFFI.TVMFFIAny(Int32(LibTVMFFI.kTVMFFINone), 0, 0))
 
     # CRITICAL GC Safety:
-    # We must preserve args_any and holders during the C call
+    # We must preserve args_any and views during the C call
     # - args_any: managed TVMAny objects
-    # - holders: DLTensorHolders with array data
+    # - views: TensorView objects with array data
     local ret
-    GC.@preserve args args_any holders begin
+    GC.@preserve args args_any views begin
         ret = if num_args > 0
             LibTVMFFI.TVMFFIFunctionCall(
                 func.handle,

@@ -1,54 +1,54 @@
 # Tests for DLTensor and Array Handling
 
-@testset "DLTensorHolder - CPU Arrays" begin
-    # Test creating holder from regular array
+@testset "TensorView - CPU Arrays" begin
+    # Test creating view from regular array
     x = Float32[1, 2, 3, 4, 5]
-    holder = DLTensorHolder(x)
+    view = TensorView(x)
 
-    @test holder isa DLTensorHolder
-    @test holder.shape == [5]
-    @test holder.strides == [1]
-    @test holder.source === x
-    @test holder.tensor.device.device_type == Int32(LibTVMFFI.kDLCPU)
+    @test view isa TensorView
+    @test view.shape == [5]
+    @test view.strides == [1]
+    @test view.source === x
+    @test view.dltensor.device.device_type == Int32(LibTVMFFI.kDLCPU)
 
-    # Test that holder keeps array alive
-    @test eltype(holder.source) == Float32
+    # Test that view keeps array alive
+    @test eltype(view.source) == Float32
 end
 
-@testset "DLTensorHolder - Slices" begin
+@testset "TensorView - Slices" begin
     # Test vector slice
     vec = Float32[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     slice = @view vec[3:7]
-    holder = DLTensorHolder(slice)
+    view = TensorView(slice)
 
-    @test holder isa DLTensorHolder
-    @test holder.shape == [5]
-    @test holder.strides == [1]  # Contiguous slice
-    @test holder.source === slice
+    @test view isa TensorView
+    @test view.shape == [5]
+    @test view.strides == [1]  # Contiguous slice
+    @test view.source === slice
 
     # Test column slice (contiguous in column-major)
     matrix = Float32[1 2 3; 4 5 6; 7 8 9]
     col = @view matrix[:, 2]
-    col_holder = DLTensorHolder(col)
+    col_view = TensorView(col)
 
-    @test col_holder.shape == [3]
-    @test col_holder.strides == [1]  # Contiguous
+    @test col_view.shape == [3]
+    @test col_view.strides == [1]  # Contiguous
 
     # Test row slice (non-contiguous in column-major)
     row = @view matrix[2, :]
-    row_holder = DLTensorHolder(row)
+    row_view = TensorView(row)
 
-    @test row_holder.shape == [3]
-    @test row_holder.strides == [3]  # Non-contiguous
+    @test row_view.shape == [3]
+    @test row_view.strides == [3]  # Non-contiguous
 end
 
-@testset "DLTensorHolder - unsafe_convert" begin
+@testset "TensorView - unsafe_convert" begin
     # Test that unsafe_convert works
     x = Float32[1, 2, 3]
-    holder = DLTensorHolder(x)
+    view = TensorView(x)
 
     # Should be able to get pointer
-    ptr = Base.unsafe_convert(Ptr{DLTensor}, holder)
+    ptr = Base.unsafe_convert(Ptr{DLTensor}, view)
     @test ptr != C_NULL
 
     # Pointer should point to valid data
@@ -58,28 +58,28 @@ end
 end
 
 @testset "Automatic Array Conversion" begin
-    # Test that TVMAny handles DLTensorHolder correctly
+    # Test that TVMAny handles TensorView correctly
     x = Float32[1, 2, 3]
 
-    # Should auto-convert AbstractArray to DLTensorHolder
+    # Should auto-convert AbstractArray to TensorView
     # (This is tested indirectly through function calls)
-    holder = DLTensorHolder(x)
-    any_val = TVMAny(holder)
+    view = TensorView(x)
+    any_val = TVMAny(view)
 
     @test TVMFFI.type_index(any_val) == Int32(LibTVMFFI.kTVMFFIDLTensorPtr)
     @test raw_data(any_val).data != 0
 end
 
-@testset "DLTensorHolder - Unified CPU/GPU" begin
-    # Test that DLTensorHolder works for both CPU and GPU arrays
+@testset "TensorView - Unified CPU/GPU" begin
+    # Test that TensorView works for both CPU and GPU arrays
     # (GPU test only runs if GPU available, but we test the type unification)
 
     cpu_arr = Float32[1, 2, 3]
-    cpu_holder = DLTensorHolder(cpu_arr)
+    cpu_view = TensorView(cpu_arr)
 
-    @test cpu_holder isa DLTensorHolder
-    @test cpu_holder.tensor.device.device_type == Int32(LibTVMFFI.kDLCPU)
+    @test cpu_view isa TensorView
+    @test cpu_view.dltensor.device.device_type == Int32(LibTVMFFI.kDLCPU)
 
-    # GPU arrays would create the same DLTensorHolder type
+    # GPU arrays would create the same TensorView type
     # just with different device_type in the tensor
 end
