@@ -64,7 +64,8 @@ export register_object, get_type_index, type_index, type_key
 export @register_object, @register_object_simple
 export get_type_info, get_fields, get_methods
 export FieldInfo, MethodInfo
-export get_field_value, call_method, get_method_function
+export get_field_value, set_field_value!, call_method, get_method_function
+export has_ffi_init, ffi_init
 export to_julia_array
 export cpu, cuda, opencl, vulkan, metal, rocm
 export tvm_ffi_version, dtype_to_julia_type

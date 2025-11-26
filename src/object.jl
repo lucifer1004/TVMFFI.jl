@@ -213,6 +213,7 @@ struct FieldInfo
     getter::Ptr{Cvoid}
     setter::Ptr{Cvoid}
     static_type_index::Int32
+    offset::Int64  # Byte offset from object start
 end
 
 function FieldInfo(info::LibTVMFFI.TVMFFIFieldInfo)
@@ -224,7 +225,8 @@ function FieldInfo(info::LibTVMFFI.TVMFFIFieldInfo)
         name, doc, metadata, info.flags,
         (info.flags & LibTVMFFI.kTVMFFIFieldFlagBitMaskWritable) != 0,
         (info.flags & LibTVMFFI.kTVMFFIFieldFlagBitMaskHasDefault) != 0,
-        info.getter, info.setter, info.field_static_type_index
+        info.getter, info.setter, info.field_static_type_index,
+        info.offset
     )
 end
 
@@ -307,15 +309,18 @@ function get_field_value(obj, field::FieldInfo)
         error("Field '$(field.name)' has no getter")
     end
 
-    # Get pointer to the field within the object
-    # Field offset is from the start of the object data (after TVMFFIObject header)
+    # Get pointer to the object
     handle = getfield(obj, :handle)
+
+    # Calculate field address: obj_ptr + offset
+    # The getter expects the field address, not the object address
+    field_addr = handle + field.offset
 
     # Create result Any for the getter
     result = Ref{LibTVMFFI.TVMFFIAny}()
 
-    # Call the getter: int (*getter)(void* field, TVMFFIAny* result)
-    ret = ccall(field.getter, Cint, (Ptr{Cvoid}, Ptr{LibTVMFFI.TVMFFIAny}), handle, result)
+    # Call the getter: int (*getter)(void* field_addr, TVMFFIAny* result)
+    ret = ccall(field.getter, Cint, (Ptr{Cvoid}, Ptr{LibTVMFFI.TVMFFIAny}), field_addr, result)
 
     if ret != 0
         error("Failed to get field '$(field.name)'")
@@ -323,6 +328,42 @@ function get_field_value(obj, field::FieldInfo)
 
     # Convert result to Julia value
     return copy_value(TVMAnyView(result[]))
+end
+
+"""
+    set_field_value!(obj, field::FieldInfo, value) -> Nothing
+
+Write a field value to an object using the reflection setter.
+"""
+function set_field_value!(obj, field::FieldInfo, value)
+    if field.setter == C_NULL
+        error("Field '$(field.name)' has no setter")
+    end
+
+    if !field.is_writable
+        error("Field '$(field.name)' is read-only")
+    end
+
+    # Get pointer to the object
+    handle = getfield(obj, :handle)
+
+    # Calculate field address: obj_ptr + offset
+    field_addr = handle + field.offset
+
+    # Convert Julia value to TVMAny
+    value_any = TVMAny(value)
+
+    # Call the setter: int (*setter)(void* field_addr, const TVMFFIAny* value)
+    # Use GC.@preserve to ensure value_any stays alive during the ccall
+    GC.@preserve value_any begin
+        ret = ccall(field.setter, Cint, (Ptr{Cvoid}, Ref{LibTVMFFI.TVMFFIAny}), field_addr, value_any.data)
+    end
+
+    if ret != 0
+        error("Failed to set field '$(field.name)'")
+    end
+
+    return nothing
 end
 
 """
@@ -585,11 +626,8 @@ macro register_object(type_key, struct_def)
 
             for field in fields
                 if field.name == name_str
-                    if !field.is_writable
-                        error("Field '$name' is read-only")
-                    end
-                    # TODO: Implement field setter
-                    error("Field setting not yet implemented")
+                    set_field_value!(obj, field, value)
+                    return value
                 end
             end
 
@@ -610,9 +648,94 @@ macro register_object(type_key, struct_def)
             return tuple(names...)
         end
 
+        # Try to setup __ffi_init__ constructor
+        _setup_ffi_init_constructor($(esc(type_name)), $(esc(type_key)))
+
         # Return the type
         $(esc(type_name))
     end
+end
+
+"""
+    _setup_ffi_init_constructor(T::Type, type_key::String)
+
+Setup a constructor that calls __ffi_init__ if available.
+This enables `T(; field1=val1, field2=val2, ...)` syntax.
+"""
+function _setup_ffi_init_constructor(T::Type, type_key::String)
+    # Look for __ffi_init__ method in reflection
+    type_info = get_type_info(type_key)
+    if type_info === nothing
+        return  # No reflection info
+    end
+
+    methods = get_methods(type_info)
+    init_method = nothing
+    for m in methods
+        if m.name == "__ffi_init__"
+            init_method = m
+            break
+        end
+    end
+
+    if init_method === nothing
+        return  # No __ffi_init__ method
+    end
+
+    # Store the init method for this type
+    _ffi_init_methods[T] = init_method
+end
+
+# Cache for __ffi_init__ methods
+const _ffi_init_methods = Dict{DataType, MethodInfo}()
+
+"""
+    has_ffi_init(T::Type) -> Bool
+
+Check if a type has an __ffi_init__ method registered.
+"""
+has_ffi_init(T::Type) = haskey(_ffi_init_methods, T)
+
+"""
+    ffi_init(T::Type, args...; kwargs...) -> T
+
+Create an instance of T using its __ffi_init__ method.
+
+# Example
+```julia
+@register_object "testing.MyClass" struct MyClass end
+
+# If MyClass has __ffi_init__(v_i64, v_f64), you can call:
+obj = ffi_init(MyClass, 42, 3.14)
+```
+"""
+function ffi_init(T::Type, args...; kwargs...)
+    if !haskey(_ffi_init_methods, T)
+        error("Type $T does not have an __ffi_init__ method")
+    end
+
+    init_method = _ffi_init_methods[T]
+    method_func = get_method_function(init_method)
+
+    # __ffi_init__ is typically static and returns an object handle
+    result = method_func(args...; kwargs...)
+
+    # If result is already the right type, return it
+    if result isa T
+        return result
+    end
+
+    # If result is a TVMObject, wrap it in T
+    if result isa TVMObject
+        return T(result.handle; borrowed=true)
+    end
+
+    # If result is a raw handle (shouldn't happen but just in case)
+    if result isa Ptr{Cvoid} || result isa LibTVMFFI.TVMFFIObjectHandle
+        return T(result; borrowed=false)
+    end
+
+    error("Unexpected result type from __ffi_init__: $(typeof(result))")
 end
 
 """

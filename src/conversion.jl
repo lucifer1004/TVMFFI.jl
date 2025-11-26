@@ -54,6 +54,17 @@ function TVMAny(value::Int64)
     TVMAny(raw, Val(:no_finalizer))
 end
 
+# Support other integer types - TVM FFI ABI stores all integers as kTVMFFIInt + int64
+# This matches Rust/Python implementations where all integer types are converted to i64
+# See: tvm-ffi/rust/tvm-ffi/src/type_traits.rs impl_any_compatible_for_int! macro
+TVMAny(value::Int32) = TVMAny(Int64(value))
+TVMAny(value::Int16) = TVMAny(Int64(value))
+TVMAny(value::Int8) = TVMAny(Int64(value))
+TVMAny(value::UInt64) = TVMAny(reinterpret(Int64, value))
+TVMAny(value::UInt32) = TVMAny(Int64(value))
+TVMAny(value::UInt16) = TVMAny(Int64(value))
+TVMAny(value::UInt8) = TVMAny(Int64(value))
+
 """
     TVMAny(value::Float64)
 
