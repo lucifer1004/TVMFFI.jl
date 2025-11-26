@@ -74,7 +74,7 @@ function safe_call(
         result_holder = nothing
         result_any = if result isa AbstractArray && !(result isa DLTensorHolder)
             # Create holder and TVMAny
-            result_holder = from_julia_array(result)
+            result_holder = DLTensorHolder(result)
             TVMAny(result_holder)
         else
             TVMAny(result)
@@ -287,7 +287,7 @@ Pre-created holders can be passed for performance optimization.
 func(x, y)
 
 # Optimized - reuse holders
-holder = from_julia_array(x)
+holder = DLTensorHolder(x)
 for i in 1:1000000
     func(holder)
 end
@@ -303,7 +303,7 @@ function (func::TVMFunction)(args...)
     
     for (i, arg) in enumerate(args)
         if arg isa AbstractArray && !(arg isa DLTensorHolder)
-            holder = from_julia_array(arg)
+            holder = DLTensorHolder(arg)
             args_any[i] = TVMAny(holder)
             holders[i] = holder  # Keep holder alive
         elseif arg isa DLTensorHolder

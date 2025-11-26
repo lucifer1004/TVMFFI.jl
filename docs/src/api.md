@@ -31,7 +31,7 @@ shape
 dtype
 device
 to_julia_array
-from_julia_array
+DLTensorHolder
 dtype_to_julia_type
 DLDataType
 DLDataTypeCode

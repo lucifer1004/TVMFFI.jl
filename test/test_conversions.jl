@@ -234,7 +234,7 @@ end
 @testset "TVMAny with DLTensorHolder" begin
     # Test TVMAny with DLTensorHolder
     arr = Float32[1.0, 2.0, 3.0, 4.0]
-    holder = from_julia_array(arr)
+    holder = DLTensorHolder(arr)
     any = TVMAny(holder)
     @test TVMFFI.type_index(any) == Int32(LibTVMFFI.kTVMFFIDLTensorPtr)
     

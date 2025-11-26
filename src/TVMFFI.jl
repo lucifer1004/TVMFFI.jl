@@ -61,7 +61,7 @@ export ValueError, TypeError, RuntimeError, AttributeError, KeyError, IndexError
 export check_call, shape, dtype, device
 export get_global_func, register_global_func
 export register_object, get_type_index
-export to_julia_array, from_julia_array
+export to_julia_array
 export cpu, cuda, opencl, vulkan, metal, rocm
 export tvm_ffi_version, dtype_to_julia_type
 
@@ -70,7 +70,7 @@ export load_module, get_function, system_lib
 export write_to_file, inspect_source, get_module_kind, implements_function
 
 # Export GPU support functions
-# Note: No from_gpu_array - from_julia_array handles everything!
+# Note: DLTensorHolder(arr) handles both CPU and GPU arrays!
 export supports_gpu_backend, list_available_gpu_backends
 export print_gpu_info, gpu_array_info
 

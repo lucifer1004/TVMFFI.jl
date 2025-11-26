@@ -393,26 +393,24 @@ end
 Extended method for GPU arrays - uses same DLTensorHolder as CPU!
 
 # Design Philosophy (Linus-style)
-ONE function, ONE type, ALL devices.
+ONE constructor, ONE type, ALL devices.
 - Auto-detect GPU backend from array type
 - Create appropriate device automatically
 - Return unified DLTensorHolder
-
-No from_gpu_array needed - it was a redundant special case!
 
 # Examples
 ```julia
 using CUDA
 
 # CPU and GPU - same API!
-cpu_holder = from_julia_array(cpu_arr)     # Auto: CPU device
-gpu_holder = from_julia_array(gpu_arr)     # Auto: CUDA device
+cpu_holder = DLTensorHolder(cpu_arr)     # Auto: CPU device
+gpu_holder = DLTensorHolder(gpu_arr)     # Auto: CUDA device
 
 # Both return DLTensorHolder{T, S}
 # Device info is in holder.tensor.device
 ```
 """
-function from_julia_array(arr::S) where {S <: AbstractArray}
+function DLTensorHolder(arr::S) where {S <: AbstractArray}
     T = eltype(arr)
 
     # Auto-detect backend and create GPU device

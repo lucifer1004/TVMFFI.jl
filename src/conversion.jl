@@ -214,7 +214,7 @@ Create a TVMAny from a Julia array (converts to DLTensorHolder first).
 Note: Returns a tuple (any, holder) - the holder must be kept alive!
 """
 function TVMAny(value::AbstractArray)
-    holder = from_julia_array(value)
+    holder = DLTensorHolder(value)
     any = TVMAny(holder)
     return any, holder  # Caller must GC.@preserve holder
 end

@@ -433,31 +433,3 @@ function Base.unsafe_convert(::Type{Ptr{DLTensor}}, holder::DLTensorHolder)
     return Ptr{DLTensor}(pointer_from_objref(holder))
 end
 
-"""
-    from_julia_array(arr, device=cpu()) -> DLTensorHolder
-
-Create DLTensor holder from Julia array or slice.
-
-Supports CPU and GPU arrays, including zero-copy slices.
-
-# Examples
-```julia
-# Array
-holder = from_julia_array(x)
-
-# Slice (zero-copy)
-col = @view matrix[:, 2]
-holder = from_julia_array(col)
-
-# GPU array (auto-detects device)
-gpu_holder = from_julia_array(cuda_array)
-```
-"""
-function from_julia_array(
-        arr::Union{Array{T}, SubArray{T, M, Array{T, N}}},
-        device::DLDevice = cpu()
-) where {T, M, N}
-    # Only handle CPU arrays - GPU arrays are handled by gpuarrays_support.jl
-    # SubArray{T, N, Array{T, N}} ensures the underlying array is CPU Array
-    return DLTensorHolder(arr, device)
-end

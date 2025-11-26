@@ -82,7 +82,7 @@ end
 
     # Test with actual tensor
     x = Float32[1, 2, 3, 4, 5]
-    holder = from_julia_array(x)
+    holder = DLTensorHolder(x)
     @test holder.tensor.ndim == 1
     @test holder.tensor.dtype.bits == 32
     @test holder.tensor.device.device_type == Int32(LibTVMFFI.kDLCPU)

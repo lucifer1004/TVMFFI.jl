@@ -74,13 +74,13 @@ println(string(dt))  # "float32"
 ```julia
 # 1. CPU Arrays
 x = Float32[1, 2, 3, 4, 5]
-holder = from_julia_array(x)
+holder = DLTensorHolder(x)
 
 # 2. GPU Arrays (requires CUDA.jl, Metal.jl, etc.)
 # Automatically detects device type and handles pointers correctly
 using CUDA
 x_gpu = CuArray(Float32[1, 2, 3])
-holder_gpu = from_julia_array(x_gpu)
+holder_gpu = DLTensorHolder(x_gpu)
 
 # 3. Call TVM functions
 # Arrays are automatically converted to DLTensor
