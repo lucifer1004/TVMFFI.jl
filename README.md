@@ -144,6 +144,56 @@ For full API documentation, see [Documentation](https://lucifer1004.github.io/TV
 
 - **[API Reference](https://lucifer1004.github.io/TVMFFI.jl/dev/api/)**: Complete list of exported functions and types.
 
+## Performance
+
+FFI overhead has been carefully measured using [BenchmarkTools.jl](https://github.com/JuliaCI/BenchmarkTools.jl).
+
+### FFI Overhead Summary
+
+| Operation | Time | vs Julia | Allocations |
+|-----------|------|----------|-------------|
+| Pure Julia call | 1.1 ns | 1x | 0 |
+| TVMAny(Int64) | 6 ns | 6x | 1 (32 B) |
+| TensorView creation | 27 ns | 25x | 5 (208 B) |
+| IncRef + DecRef | 6 ns | 5x | 0 |
+| Dict lookup (callback) | 13 ns | 12x | 0 |
+| **TVM func() empty** | **209 ns** | **190x** | 5 (160 B) |
+| **TVM func(Int64)** | **272 ns** | **250x** | 10 (336 B) |
+| TVM func(Array[64]) | 3.1 μs | 2800x | 62 (2.7 KB) |
+| TVM func(TensorView[64]) | 3.0 μs | 2750x | 57 (2.5 KB) |
+| TVM func(Array[4096]) | 19 μs | 17000x | 66 (35 KB) |
+
+### Overhead Breakdown
+
+For a typical scalar function call (~260 ns):
+
+```
+ccall + callback dispatch:  232 ns  (89.5%)  ← C-side overhead
+Args Vector allocation:      12 ns  ( 4.7%)
+TVMAny conversion:            7 ns  ( 2.6%)
+Result Ref allocation:        6 ns  ( 2.5%)
+raw_data extraction:          2 ns  ( 0.7%)
+```
+
+**Key insight**: 89.5% of overhead is in C-side callback dispatch, not Julia.
+
+### Practical Impact
+
+| Workload | FFI Overhead | Recommendation |
+|----------|--------------|----------------|
+| Inference (1ms+) | < 0.03% | ✅ Negligible |
+| Micro-ops (1μs) | ~20-30% | ⚠️ Consider batching |
+| Hot loops (100ns) | Dominates | ❌ Use raw ccall |
+
+### Running Benchmarks
+
+```bash
+cd benchmarks
+julia --project=. -e 'using Pkg; Pkg.develop(path=".."); Pkg.instantiate()'
+julia --project=. ffi_overhead.jl
+julia --project=. microbenchmarks.jl
+```
+
 ## Architecture
 
 ```

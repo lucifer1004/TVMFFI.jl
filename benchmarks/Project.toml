@@ -1,0 +1,7 @@
+[deps]
+BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
+TVMFFI = "b9edd577-36ff-4738-b9a8-ebb7fbd77e94"
+
+[compat]
+BenchmarkTools = "1"
+julia = "1.10"
