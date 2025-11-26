@@ -211,3 +211,99 @@ No intermediate wrappers. One Julia struct = One C struct.
 - If C API doesn't support it, don't hack around it
 - If existing code works, verify and document it (don't rewrite)
 - Defer advanced features until they're actually needed
+
+---
+
+## Future Design: GC Pooling for Julia Object Exposure
+
+> Reference: MWORKS.Syslab团队的GC Pooling技术（同元软控）
+
+### Problem Statement
+
+When exposing Julia objects to external languages (like TVM/C++), we face a challenge:
+- Julia GC may collect objects that are still referenced by the external language
+- External language has no way to participate in Julia's GC
+
+### Current Implementation
+
+`function.jl` uses a simple registry approach:
+
+```julia
+const _callback_registry = Dict{Ptr{Cvoid}, Any}()
+
+function register_global_func(name, func)
+    func_ref = Ref{Any}(func)
+    resource_handle = Base.unsafe_convert(Ptr{Cvoid}, func_ref)
+    _callback_registry[resource_handle] = func_ref  # Keep alive
+    # ... register with TVM ...
+end
+
+function callback_deleter(resource_handle)
+    delete!(_callback_registry, resource_handle)  # Allow GC
+end
+```
+
+**Limitations**:
+- Dict uses pointer as key → hash overhead
+- No slot reuse after deletion → memory fragmentation
+- Pointer debugging is harder than integer indices
+
+### GC Pooling Pattern
+
+Core idea: Use a **slot pool** as GC root, expose **integer indices** instead of pointers.
+
+```julia
+# Object pool as GC root
+const JULIA_OBJECT_POOL = Vector{Any}(undef, 1024)
+const POOL_FREELIST = Vector{Int}()
+const POOL_LOCK = ReentrantLock()
+
+function pool_insert(obj)::Int
+    lock(POOL_LOCK) do
+        idx = if isempty(POOL_FREELIST)
+            push!(JULIA_OBJECT_POOL, obj)
+            length(JULIA_OBJECT_POOL)
+        else
+            pop!(POOL_FREELIST)
+            JULIA_OBJECT_POOL[idx] = obj
+            idx
+        end
+        return idx
+    end
+end
+
+function pool_get(idx::Int)
+    @inbounds JULIA_OBJECT_POOL[idx]
+end
+
+function pool_release(idx::Int)
+    lock(POOL_LOCK) do
+        JULIA_OBJECT_POOL[idx] = nothing  # Allow GC
+        push!(POOL_FREELIST, idx)
+    end
+end
+```
+
+**Benefits**:
+- O(1) slot reuse via freelist
+- Integer indices are easier to debug
+- No hash computation
+- Compact memory layout
+
+### When to Implement
+
+**Do NOT implement now** - current `_callback_registry` works fine for:
+- Global function registration (infrequent)
+- Long-lived callbacks
+
+**Implement when**:
+1. **`@register_object` macro** (Priority 2) - Julia objects exposed as TVM objects need lifecycle management
+2. **Callback returns Julia arrays** - If TVM needs to hold array references beyond callback scope
+3. **Performance issues** - If profiling shows registry operations as bottleneck
+
+### Integration Points
+
+When implementing, modify:
+1. `src/function.jl`: Replace `_callback_registry` Dict with pool
+2. `src/object.jl`: Use pool for `@register_object` macro
+3. C callbacks: Pass slot index instead of pointer
