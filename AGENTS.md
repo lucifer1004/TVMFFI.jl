@@ -129,30 +129,75 @@ end
 ```
 
 **Quick Reference**:
-- `own=true`: IncRef immediately, DecRef in finalizer (copy reference)
-- `own=false`: Don't IncRef, DecRef in finalizer (take ownership)
+- `borrowed=true`: IncRef immediately, DecRef in finalizer (copy reference)
+- `borrowed=false`: Don't IncRef, DecRef in finalizer (take ownership)
 
-#### 3. Common Pitfalls
+#### 3. Cross-Language Verified Reference Semantics
+
+> **Audit Date**: 2025-11-26
+> **Verified Against**: C++ (`object.h`, `function.h`), Python (`object.pxi`, `function.pxi`), Rust (`object.rs`, `any.rs`, `function.rs`)
+
+**C API Return Semantics** (when Julia receives from C):
+
+| C API Function | Returns | Julia `borrowed` | Rationale |
+|----------------|---------|------------------|-----------|
+| `TVMFFIFunctionGetGlobal` | New reference | `false` | Caller owns, don't IncRef |
+| `TVMFFIFunctionCall` result | New reference | `false` | Caller owns the result |
+| `TVMFFIErrorMoveFromRaised` | Moved ownership | `false` | "Move" = take ownership |
+| `TVMFFIStringFromByteArray` | New reference | N/A | Direct use, finalizer handles |
+| `TVMFFIBytesFromByteArray` | New reference | N/A | Direct use, finalizer handles |
+| Callback arguments | Borrowed | `true` | Must IncRef to keep alive |
+
+**Julia → C Passing Pattern**:
+
+```julia
+# When passing TVMObject/TVMFunction to C API:
+function (func::TVMFunction)(args...)
+    # 1. IncRef before passing (to_tvm_any does this)
+    args_array[i] = to_tvm_any(arg)  # IncRef inside
+    
+    # 2. Call C API
+    ret = LibTVMFFI.TVMFFIFunctionCall(...)
+    
+    # 3. DecRef after call (cleanup)
+    for arg_any in args_array
+        if is_object(arg_any)
+            LibTVMFFI.TVMFFIObjectDecRef(obj_ptr)
+        end
+    end
+end
+```
+
+**Cross-Language Equivalents**:
+
+| Julia | C++ | Rust | Python |
+|-------|-----|------|--------|
+| `TVMObject(h; borrowed=false)` | `ObjectPtrFromOwned(h)` | `ObjectArc::from_raw(h)` | Direct assign to `.chandle` |
+| `TVMObject(h; borrowed=true)` | `ObjectPtrFromUnowned(h)` | Clone after `from_raw` | `TVMFFIAnyViewToOwnedAny` |
+| `from_tvm_any(; borrowed=false)` | Return from function | `Any::from_raw_ffi_any` | `make_ret(result)` |
+| `from_tvm_any(; borrowed=true)` | Callback arg handling | `T::copy_from_any_view` | `TVMFFIAnyViewToOwnedAny` |
+
+#### 4. Common Pitfalls
 
 | Mistake | Impact | How to Avoid |
 |---------|--------|--------------|
 | Missing `GC.@preserve` | Segfault, data corruption | Always wrap `pointer()` → C calls |
-| Wrong `own` parameter | Double-free, use-after-free | Check if C API returns new ref or borrows |
+| Wrong `borrowed` parameter | Double-free, use-after-free | Check if C API returns new ref or borrows |
 | Forgetting `DecRef` | Memory leak | Every `IncRef` needs matching `DecRef` |
 | Preserving fields directly | Syntax error | Extract to local: `x = obj.field` |
 
-#### 4. Code Review Checklist
+#### 5. Code Review Checklist
 
 Before committing C FFI code, verify:
 
 - [ ] Every `pointer(x)` is inside `GC.@preserve x`
 - [ ] Every `TVMFFIByteArray` construction preserves the source data
 - [ ] Every `IncRef` has a corresponding `DecRef`
-- [ ] `own` parameter matches reference source (new ref vs borrowed ref)
+- [ ] `borrowed` parameter matches reference source (new ref vs borrowed ref)
 - [ ] Finalizers are registered for all heap objects
 - [ ] NULL pointer checks before dereferencing
 
-#### 5. Testing for Memory Safety
+#### 6. Testing for Memory Safety
 
 Add tests that stress memory management:
 
