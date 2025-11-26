@@ -134,17 +134,17 @@ mutable struct TVMFunction
     handle::LibTVMFFI.TVMFFIObjectHandle
 
     """
-        TVMFunction(handle; borrowed=true)
+        TVMFunction(handle; borrowed)
 
-    Create a TVMFunction from a raw handle.
+    Create a TVMFunction from a raw handle. Internal API - users should not call directly.
 
     # Arguments
     - `handle`: The raw function handle
-    - `borrowed`: Reference semantics
-      - `borrowed=true` (default): Borrowed reference, increment refcount (safe)
+    - `borrowed`: Reference semantics (REQUIRED - no default to prevent misuse)
+      - `borrowed=true`: Borrowed reference, increment refcount
       - `borrowed=false`: Owned reference, take without IncRef (C gave us ownership)
     """
-    function TVMFunction(handle::LibTVMFFI.TVMFFIObjectHandle; borrowed::Bool = true)
+    function TVMFunction(handle::LibTVMFFI.TVMFFIObjectHandle; borrowed::Bool)
         if handle == C_NULL
             error("Cannot create TVMFunction from NULL handle")
         end

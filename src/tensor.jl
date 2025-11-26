@@ -102,17 +102,17 @@ mutable struct TVMTensor
     handle::LibTVMFFI.TVMFFIObjectHandle
 
     """
-        TVMTensor(handle; borrowed=true)
+        TVMTensor(handle; borrowed)
 
-    Create a TVMTensor from a raw handle.
+    Create a TVMTensor from a raw handle. Internal API - users should not call directly.
 
     # Arguments
     - `handle`: The raw tensor handle
-    - `borrowed`: Reference semantics
-      - `borrowed=true` (default): Borrowed reference, increment refcount (safe)
+    - `borrowed`: Reference semantics (REQUIRED - no default to prevent misuse)
+      - `borrowed=true`: Borrowed reference, increment refcount
       - `borrowed=false`: Owned reference, take without IncRef (C gave us ownership)
     """
-    function TVMTensor(handle::LibTVMFFI.TVMFFIObjectHandle; borrowed::Bool = true)
+    function TVMTensor(handle::LibTVMFFI.TVMFFIObjectHandle; borrowed::Bool)
         if handle == C_NULL
             error("Cannot create TVMTensor from NULL handle")
         end

@@ -60,8 +60,8 @@ mutable struct TVMString
     end
 
     # Constructor from TVMFFIAny (internal use)
-    # Note: Takes ownership by default (borrowed=false) - C API returns new reference
-    function TVMString(any::LibTVMFFI.TVMFFIAny; borrowed::Bool = false)
+    # Internal API - users should not call directly
+    function TVMString(any::LibTVMFFI.TVMFFIAny; borrowed::Bool)
         tvmstr = new(any)
 
         # Add finalizer for heap objects
@@ -159,9 +159,9 @@ mutable struct TVMBytes
         return tvmbytes
     end
 
-    # Constructor from TVMFFIAny
-    # Note: Takes ownership by default (borrowed=false) - C API returns new reference
-    function TVMBytes(any::LibTVMFFI.TVMFFIAny; borrowed::Bool = false)
+    # Constructor from TVMFFIAny (internal use)
+    # Internal API - users should not call directly
+    function TVMBytes(any::LibTVMFFI.TVMFFIAny; borrowed::Bool)
         tvmbytes = new(any)
 
         if any.type_index >= Int32(LibTVMFFI.kTVMFFIStaticObjectBegin)

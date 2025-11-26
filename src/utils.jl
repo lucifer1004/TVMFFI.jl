@@ -69,56 +69,14 @@ function _get_root_array(arr)
     return current
 end
 
-"""
-    _navigate_to_root_module(arr, target_module_name::Symbol) -> Module
-
-Navigate from an array's type to its root GPU package module.
-
-Design Philosophy (Linus-style):
-- Good taste: One function handles all GPU backends
-- Simple: Just walk up the module tree
-- No special cases: Same logic for CUDA, AMDGPU, oneAPI, Metal
-
-# Arguments
-- `arr`: GPU array object (will be unwrapped if it's a wrapper)
-- `target_module_name::Symbol`: Name of the root module to find (:CUDA, :AMDGPU, :oneAPI, :Metal)
-
-# Returns
-- `Module`: The root module of the GPU package
-
-# Algorithm
-1. Unwrap array wrappers to find the actual GPU array
-2. Start from `parentmodule(typeof(arr))`
-3. Walk up the module tree via repeated `parentmodule()` calls
-4. Stop when we reach a module with the target name OR the root (module is its own parent)
-
-# Examples
-```julia
-using CUDA
-x = CUDA.CuArray([1, 2, 3])
-cuda_module = _navigate_to_root_module(x, :CUDA)
-# Returns: CUDA module
-
-# Also works with wrappers!
-using OffsetArrays
-y = OffsetArray(x, -1:1)
-cuda_module = _navigate_to_root_module(y, :CUDA)  # Still returns CUDA module
-```
-"""
-function _navigate_to_root_module(arr, target_module_name::Symbol)
-    # First, unwrap any array wrappers
-    unwrapped = _get_root_array(arr)
-
-    arr_module = parentmodule(typeof(unwrapped))
-
-    # Walk up the module tree to find the root module
-    while parentmodule(arr_module) !== arr_module
-        arr_module = parentmodule(arr_module)
-        # Early exit if we found the target module
-        if nameof(arr_module) == target_module_name
-            break
-        end
-    end
-
-    return arr_module
-end
+# _navigate_to_root_module has been DELETED!
+#
+# Design Philosophy (Linus-style):
+# - It was a hack to work around not having proper type dispatch
+# - Now we use DLPack.dldevice() for device detection - no duplication!
+# - DLPack.jl already handles type dispatch for all GPU backends
+#
+# If you're looking for how GPU backends are detected, see:
+# - DLPack.jl/ext/CUDAExt.jl: dldevice(::CUDA.CuArray)
+# - TVMFFI/ext/AMDGPUExt.jl: DLPack.dldevice(::AMDGPU.ROCArray)
+# - TVMFFI/ext/MetalExt.jl: DLPack.dldevice(::Metal.MtlArray)

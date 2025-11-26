@@ -38,17 +38,17 @@ mutable struct TVMObject
     handle::LibTVMFFI.TVMFFIObjectHandle
 
     """
-        TVMObject(handle; borrowed=true)
+        TVMObject(handle; borrowed)
 
-    Create a TVMObject from a raw handle.
+    Create a TVMObject from a raw handle. Internal API - users should not call directly.
 
     # Arguments
     - `handle`: The raw object handle
-    - `borrowed`: Reference semantics
-      - `borrowed=true` (default): Borrowed reference, increment refcount (safe)
+    - `borrowed`: Reference semantics (REQUIRED - no default to prevent misuse)
+      - `borrowed=true`: Borrowed reference, increment refcount
       - `borrowed=false`: Owned reference, take without IncRef (C gave us ownership)
     """
-    function TVMObject(handle::LibTVMFFI.TVMFFIObjectHandle; borrowed::Bool = true)
+    function TVMObject(handle::LibTVMFFI.TVMFFIObjectHandle; borrowed::Bool)
         if handle == C_NULL
             error("Cannot create TVMObject from NULL handle")
         end

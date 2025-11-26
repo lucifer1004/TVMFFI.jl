@@ -87,7 +87,7 @@ include("dtype.jl")
 include("device.jl")
 include("string.jl")
 include("object.jl")
-include("utils.jl")               # Internal utilities (_get_root_array, _navigate_to_root_module)
+include("utils.jl")               # Internal utilities (_get_root_array)
 include("tensor.jl")              # Defines DLTensor, TensorView and basic conversions
 include("gpuarrays_support.jl")   # GPU abstraction (extends TensorView constructor)
 include("function.jl")            # Defines TVMFunction

@@ -98,8 +98,8 @@ mutable struct TVMError <: Exception
     end
 
     # Constructor from existing handle (e.g., from TLS)
-    # Note: Takes ownership by default (borrowed=false) - C gave us the reference
-    function TVMError(handle::LibTVMFFI.TVMFFIObjectHandle; borrowed::Bool = false)
+    # Internal API - users should not call directly
+    function TVMError(handle::LibTVMFFI.TVMFFIObjectHandle; borrowed::Bool)
         if handle == C_NULL
             error("Cannot create TVMError from NULL handle")
         end
@@ -141,7 +141,7 @@ function check_call(ret::Integer)
         # Retrieve error from thread-local storage
         error_handle = LibTVMFFI.TVMFFIErrorMoveFromRaised()
         if error_handle != C_NULL
-            throw(TVMError(error_handle))
+            throw(TVMError(error_handle; borrowed=false))
         else
             # No error in TLS, but ret was non-zero
             error("TVM FFI call failed with code $ret but no error in TLS")

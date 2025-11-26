@@ -134,12 +134,24 @@ TVMFFI/
 │   ├── object.jl             # Object system
 │   ├── tensor.jl             # DLTensor support
 │   ├── function.jl           # Function calls & registration
-│   ├── gpuarrays_support.jl  # GPU array integration
+│   ├── gpuarrays_support.jl  # GPU array integration (via DLPack.jl)
+│   ├── dlpack.jl             # DLPack zero-copy tensor exchange
 │   └── module.jl             # Module loading
+├── ext/                      # Package extensions
+│   ├── CUDAExt.jl            # Placeholder (DLPack.jl provides CUDA support)
+│   ├── AMDGPUExt.jl          # AMD ROCm support
+│   └── MetalExt.jl           # Apple Metal support
 ├── test/
 │   └── runtests.jl           # Comprehensive test suite
 └── examples/                 # Usage examples
 ```
+
+### GPU Support
+
+GPU device detection uses `DLPack.dldevice()` - no code duplication:
+- **CUDA**: Handled by DLPack.jl's CUDAExt
+- **AMD ROCm**: Handled by TVMFFI's AMDGPUExt  
+- **Apple Metal**: Handled by TVMFFI's MetalExt
 
 ## Design Philosophy
 

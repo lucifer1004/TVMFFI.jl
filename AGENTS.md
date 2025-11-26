@@ -60,10 +60,15 @@ Allow defining custom TVM objects in Julia.
 ## Directory Structure
 -   `src/LibTVMFFI.jl`: Low-level C bindings (generated/maintained manually).
 -   `src/TVMFFI.jl`: Main entry point.
--   `src/any.jl`: TVMAny/TVMAnyView ownership-aware containers. **NEW**
+-   `src/any.jl`: TVMAny/TVMAnyView ownership-aware containers.
 -   `src/conversion.jl`: ABI boundary layer (to_tvm_any, take_value, copy_value).
--   `src/function.jl`: Function wrappers. **Focus here for Priority 1.**
+-   `src/function.jl`: Function wrappers.
 -   `src/object.jl`: Object wrappers. **Focus here for Priority 2.**
+-   `src/dlpack.jl`: DLPack zero-copy tensor exchange (TVMTensor, from_dlpack).
+-   `src/gpuarrays_support.jl`: GPU array integration via DLPack.jl's type dispatch.
+-   `ext/CUDAExt.jl`: Placeholder (DLPack.jl provides CUDA support).
+-   `ext/AMDGPUExt.jl`: AMD ROCm support (DLPack.share, dldevice for ROCArray).
+-   `ext/MetalExt.jl`: Apple Metal support (DLPack.share, dldevice for MtlArray).
 -   `docs/`: Documentation source and build scripts.
 
 ---
@@ -133,6 +138,10 @@ end
 **Quick Reference**:
 - `borrowed=true`: IncRef immediately, DecRef in finalizer (copy reference)
 - `borrowed=false`: Don't IncRef, DecRef in finalizer (take ownership)
+
+> **Design Decision (2025-11-26)**: The `borrowed` parameter has NO DEFAULT VALUE.
+> This is intentional - forces explicit semantics at every call site, preventing misuse.
+> These constructors are internal API; users should not call them directly.
 
 #### 3. Cross-Language Verified Reference Semantics
 
@@ -264,20 +273,28 @@ end
 
 ### 1. Good Taste - Eliminate Special Cases
 
-Use proper data structures to avoid if/else chains:
+Use existing abstractions instead of reimplementing:
 
 ```julia
-# Good: Unified handling via generic type parameter
-mutable struct TensorView{T, S}
-    source::S  # Works for Array, CuArray, ROCArray, etc.
+# ❌ BAD: String matching and module navigation hacks
+function detect_backend(arr)
+    type_name = string(typeof(arr).name.name)
+    if occursin("Cu", type_name)
+        cuda_module = _navigate_to_root_module(arr, :CUDA)  # Ugly!
+        return (:CUDA, cuda_module.deviceid(...))
+    elseif occursin("ROC", type_name)
+        ...
+    end
 end
 
-# No need for:
-if source isa CuArray
-    # special GPU handling
-elseif source isa ROCArray
-    # another special case
+# ✅ GOOD: Use DLPack.jl's type dispatch
+function _dlpack_to_tvm_device(arr)
+    dlpack_dev = DLPack.dldevice(arr)  # DLPack handles everything!
+    return DLDevice(Int32(dlpack_dev.device_type), Int32(dlpack_dev.device_id))
+end
 ```
+
+The refactored code deleted 120 lines and added 40 - a 60% reduction by using proper abstractions.
 
 ### 2. Simplicity - Direct Mapping
 
@@ -528,5 +545,61 @@ end
 1. **Zero-copy** - No data copying in either direction
 2. **Safe** - Reference counting manages lifecycle
 3. **Standard API** - `from_dlpack` matches NumPy/PyTorch/JAX naming
-4. **GPU support** - Automatic CuArray when CUDA.jl loaded
+4. **GPU support** - Automatic CuArray/MtlArray/ROCArray via extensions
 5. **Backward compatible** - `TensorView` still available for performance
+
+### GPU Support via Package Extensions
+
+> **Updated**: 2025-11-26
+> **Design**: Use DLPack.jl's type dispatch - no code duplication!
+
+GPU support leverages Julia 1.9+ package extensions and **DLPack.jl**:
+
+```
+ext/
+├── CUDAExt.jl    # Placeholder - DLPack.jl provides CUDA support
+├── MetalExt.jl   # Loaded when Metal.jl is imported (TVMFFI provides)
+└── AMDGPUExt.jl  # Loaded when AMDGPU.jl is imported (TVMFFI provides)
+```
+
+**Architecture (Linus-style: no duplication)**:
+
+| Backend | DLPack Integration | Provider |
+|---------|-------------------|----------|
+| NVIDIA CUDA | `DLPack.dldevice`, `DLPack.share` | **DLPack.jl's CUDAExt** |
+| Apple Metal | `DLPack.dldevice`, `DLPack.share` | **TVMFFI's MetalExt** |
+| AMD ROCm | `DLPack.dldevice`, `DLPack.share` | **TVMFFI's AMDGPUExt** |
+
+**Key Insight**: Device detection uses `DLPack.dldevice()` directly:
+
+```julia
+# gpuarrays_support.jl - Clean and simple!
+function _dlpack_to_tvm_device(arr)
+    dlpack_dev = DLPack.dldevice(arr)  # DLPack handles type dispatch
+    return DLDevice(Int32(dlpack_dev.device_type), Int32(dlpack_dev.device_id))
+end
+```
+
+**Deleted Code** (was redundant):
+- `detect_backend()` - DLPack.dldevice() does this
+- `gpu_backend_to_dldevice()` - unnecessary conversion
+- `_navigate_to_root_module()` - ugly hack, no longer needed
+- `_extract_cuda_device_id()` etc. - DLPack handles this
+
+**Usage**:
+```julia
+using TVMFFI
+using CUDA  # Triggers DLPack.jl's CUDAExt automatically!
+
+# Now TVMTensor works with CuArrays
+cu_arr = CUDA.rand(Float32, 3, 4)
+tensor = TVMTensor(cu_arr)  # Zero-copy!
+arr = from_dlpack(tensor)   # → CuArray
+```
+
+**Supported GPU backends**:
+| Backend | Extension | Array Type | DLDevice |
+|---------|-----------|------------|----------|
+| NVIDIA | DLPack.jl/CUDAExt | CuArray | kDLCUDA |
+| Apple | TVMFFI/MetalExt | MtlArray | kDLMetal |
+| AMD | TVMFFI/AMDGPUExt | ROCArray | kDLROCM |
