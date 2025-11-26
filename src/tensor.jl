@@ -288,52 +288,6 @@ function data_ptr(tensor::TVMTensor)
     return dltensor.data
 end
 
-"""
-    to_julia_array(tensor::TVMTensor, ::Type{T}) -> Array{T}
-
-Convert TVM tensor to Julia array (zero-copy for CPU contiguous tensors).
-
-Returns an array that shares memory with the tensor.
-"""
-function to_julia_array(tensor::TVMTensor, ::Type{T}) where {T}
-    # Check device
-    dev = device(tensor)
-    if dev.device_type != Int32(LibTVMFFI.kDLCPU)
-        error(
-            "Can only convert CPU tensors to Julia arrays. " *
-            "Tensor is on device type $(dev.device_type)",
-        )
-    end
-
-    # Verify dtype matches
-    expected_dtype = DLDataType(T)
-    actual_dtype = dtype(tensor)
-
-    if expected_dtype.code != actual_dtype.code || expected_dtype.bits != actual_dtype.bits
-        error(
-            "Type mismatch: tensor has dtype $(string(actual_dtype)), " *
-            "but requested type $T (dtype $(string(expected_dtype)))",
-        )
-    end
-
-    # Check contiguity
-    if !is_contiguous(tensor)
-        error(
-            "Can only convert contiguous tensors. For non-contiguous: use copy(to_julia_array())",
-        )
-    end
-
-    # Get shape and data pointer
-    shape_tuple = size(tensor)
-    ptr = Ptr{T}(data_ptr(tensor))
-
-    # Create zero-copy view
-    # Note: The array keeps a reference to the tensor to prevent GC
-    arr = unsafe_wrap(Array, ptr, shape_tuple)
-
-    return arr
-end
-
 # Pretty printing
 function Base.show(io::IO, tensor::TVMTensor)
     shape_tuple = size(tensor)

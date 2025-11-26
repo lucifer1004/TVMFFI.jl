@@ -40,11 +40,14 @@ We need to allow Julia functions to be called by TVM.
 3.  ✅ **Argument Conversion**: `to_tvm_any`, `take_value`, and `copy_value` work for all major types (int, float, bool, string, objects).
 4.  ✅ **Exception Handling**: Julia exceptions are properly caught and translated to TVM errors.
 
-### Priority 2: Object Registration ⚠️ Partially Complete
+### Priority 2: Object Registration ✅ COMPLETE
 Allow defining custom TVM objects in Julia.
 1.  ✅ **Basic `register_object` function**: Implemented. Can register type keys and allocate type indices.
-2.  ✅ **Type queries**: `get_type_index` works for looking up registered types.
-3.  **TODO: `@register_object` Macro**: Create a macro to generate full boilerplate (vtable, field accessors, methods) for a Julia struct to be a complete `TVMObject`.
+2.  ✅ **Type queries**: `get_type_index` and `type_index`/`type_key` for looking up registered types.
+3.  ✅ **`@register_object` Macro**: Generates struct with handle, finalizer, reflection-based property access.
+4.  ✅ **Reflection API**: `get_type_info`, `get_fields`, `get_methods` for introspection.
+5.  ✅ **Field Access**: `getproperty`/`setproperty!` via reflection getters/setters.
+6.  ✅ **Constructor**: `TypeName(args...)` syntax via `__ffi_init__` method.
 
 ### Priority 3: System Library ✅ COMPLETE
 1.  ✅ **`system_lib()`**: Access statically linked TVM modules.

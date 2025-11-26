@@ -40,49 +40,65 @@ machine learning model compilation and execution from Julia.
 """
 module TVMFFI
 
-# Export core types
-export DLDevice, DLDataType, DLDeviceType, DLDataTypeCode
-export DLTensor, TensorView
-export TVMError, TVMErrorKind
-export TVMString, TVMBytes
-export TVMFunction
-export TVMTensor
-export TVMModule
-export TVMObject
+# ============================================================================
+# Public API - For end users
+# ============================================================================
 
-# Export Any/AnyView types (ownership-aware value containers)
-export TVMAny, TVMAnyView
-export take_value, copy_value, raw_data
+# Core types
+export DLDevice, DLDataType      # Device and data type
+export TVMError                  # Error handling
+export TVMFunction               # Function objects
+export TVMTensor                 # N-dimensional arrays
+export TVMModule                 # Compiled modules
+export TensorView                # Lightweight tensor view
 
-# Export error kinds
+# Error types (for catching specific exceptions)
+export TVMErrorKind
 export ValueError, TypeError, RuntimeError, AttributeError, KeyError, IndexError
 
-# Export utility functions
-export check_call, shape, dtype, device
-export get_global_func, register_global_func
-export register_object, get_type_index, type_index, type_key
-export @register_object, @register_object_simple
-export get_type_info, get_fields, get_methods
-export FieldInfo, MethodInfo
-export get_field_value, set_field_value!, call_method, get_method_function
-export has_ffi_init, ffi_init
-export to_julia_array
+# Device creation
 export cpu, cuda, opencl, vulkan, metal, rocm
-export tvm_ffi_version, dtype_to_julia_type
 
-# Export high-level module API
-export load_module, get_function, system_lib
-export write_to_file, inspect_source, get_module_kind, implements_function
+# Tensor utilities
+export shape, dtype, device      # Query tensor properties
 
-# Export GPU support functions
-# Note: TensorView(arr) handles both CPU and GPU arrays!
-export supports_gpu_backend, list_available_gpu_backends
-export print_gpu_info, gpu_array_info
+# Function API
+export get_global_func           # Get TVM global function
+export register_global_func      # Register Julia function to TVM
 
-# Re-export DLPack.from_dlpack for TVMTensor → Array conversion
-# TVMTensor(arr) constructor is available via TVMTensor export
+# Module API
+export load_module               # Load compiled module
+export get_function              # Get function from module
+export system_lib                # Get system library
+
+# Object registration (for wrapping TVM types in Julia)
+export @register_object          # Register Julia struct as TVM object
+export type_index, type_key      # Query type info
+
+# Version info
+export tvm_ffi_version
+
+# DLPack interop
 using DLPack: from_dlpack
-export from_dlpack
+export from_dlpack               # TVMTensor → Julia Array
+
+# GPU support
+export supports_gpu_backend
+export list_available_gpu_backends
+
+# ============================================================================
+# Advanced API - Available but not exported (use TVMFFI.xxx)
+# ============================================================================
+# Low-level types: DLTensor, DLDeviceType, DLDataTypeCode, TVMObject
+# String types: TVMString, TVMBytes
+# Any containers: TVMAny, TVMAnyView, take_value, copy_value, raw_data
+# Internal: check_call, dtype_to_julia_type
+# Object registration: register_object, get_type_index, @register_object_simple
+# Reflection API: get_type_info, get_fields, get_methods, FieldInfo, MethodInfo
+#                 get_field_value, set_field_value!, call_method, get_method_function
+#                 has_ffi_init, ffi_init
+# Module introspection: write_to_file, inspect_source, get_module_kind, implements_function
+# Debug: print_gpu_info, gpu_array_info
 
 # Include submodules in dependency order
 include("LibTVMFFI.jl")

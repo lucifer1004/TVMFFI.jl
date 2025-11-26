@@ -24,9 +24,11 @@ TVMFFI.jl provides a complete, idiomatic Julia interface to TVM's C API:
 - **Exception Safety**: Julia errors are properly translated to TVM errors
 
 ### ✅ Object System
-- **Type Registration**: `register_object()` and `get_type_index()` for custom types
+- **Type Registration**: `@register_object` macro for wrapping TVM types in Julia
+- **Reflection API**: `get_type_info()`, `get_fields()`, `get_methods()` for introspection
+- **Property Access**: Automatic field/method access via `obj.field` and `obj.method()`
+- **Constructors**: Direct `TypeName(args...)` syntax for types with `__ffi_init__`
 - **Reference Counting**: Automatic memory management via finalizers
-- **Type Hierarchy**: Support for parent-child type relationships
 
 ### ✅ Module System
 - **Load Modules**: `load_module()` to load compiled TVM modules
@@ -112,6 +114,28 @@ register_global_func("julia.my_add", my_add)
 # Call it from TVM
 func = get_global_func("julia.my_add")
 result = func(Int64(10), Int64(20))  # Returns 30
+```
+
+### Working with TVM Objects
+
+```julia
+# Register a TVM type for use in Julia
+@register_object "testing.TestCxxClassBase" struct TestCxxClassBase end
+
+# Create instances (if the type has __ffi_init__)
+obj = TestCxxClassBase(Int64(42), Int32(10))
+
+# Access fields via reflection
+println(obj.v_i64)  # 42
+println(obj.v_i32)  # 10
+
+# Modify fields
+obj.v_i64 = Int64(100)
+obj.v_i32 = Int32(20)
+
+# Type introspection
+println(type_key(TestCxxClassBase))   # "testing.TestCxxClassBase"
+println(type_index(TestCxxClassBase)) # Runtime type index
 ```
 
 ## Documentation

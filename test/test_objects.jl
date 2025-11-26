@@ -126,26 +126,22 @@ end
 @testset "Reflection with TestObject" begin
     # Test with testing.TestObjectBase which has fields and methods defined in C++
     type_info = get_type_info("testing.TestObjectBase")
+    @test type_info !== nothing
+    @test type_info.num_fields > 0
 
-    if type_info !== nothing && type_info.num_fields > 0
-        # This type should have fields: v_i64, v_f64, v_str
-        fields = get_fields(type_info)
-        @test length(fields) > 0
+    # This type should have fields: v_i64, v_f64, v_str
+    fields = get_fields(type_info)
+    @test length(fields) > 0
 
-        field_names = [f.name for f in fields]
-        @test "v_i64" in field_names || "v_f64" in field_names
+    field_names = [f.name for f in fields]
+    @test "v_i64" in field_names
+    @test "v_f64" in field_names
+    @test "v_str" in field_names
 
-        # Get methods
-        methods = get_methods(type_info)
-
-        # Check if add_i64 method exists
-        method_names = [m.name for m in methods]
-        if "add_i64" in method_names
-            @test true  # Method found
-        end
-    else
-        @info "testing.TestObjectBase not available or has no reflection info"
-    end
+    # Get methods - should have add_i64
+    methods = get_methods(type_info)
+    method_names = [m.name for m in methods]
+    @test "add_i64" in method_names
 end
 
 @testset "Real TVM Type: testing.TestObjectBase" begin
@@ -156,84 +152,41 @@ end
     @test type_index(TestObjectBase) > 0
     @test type_key(TestObjectBase) == "testing.TestObjectBase"
 
-    # Check reflection cache
+    # Check reflection cache - TestObjectBase has 3 fields and 1 method
     fields, methods = TVMFFI._get_reflection_cache(TestObjectBase)
+    @test length(fields) == 3
+    @test length(methods) == 1
 
-    if length(fields) > 0
-        @info "TestObjectBase has $(length(fields)) fields: $(join([f.name for f in fields], ", "))"
-
-        # Check field properties
-        for field in fields
-            @test field.name isa String
-            @test field.getter != C_NULL  # All fields should have getters
-        end
-    else
-        @info "TestObjectBase has no reflection fields registered in C++"
+    # Check field properties
+    for field in fields
+        @test field.name isa String
+        @test field.getter != C_NULL
     end
 
-    if length(methods) > 0
-        @info "TestObjectBase has $(length(methods)) methods: $(join([m.name for m in methods], ", "))"
-
-        # Check for __ffi_init__
-        has_init = has_ffi_init(TestObjectBase)
-        @info "TestObjectBase has __ffi_init__: $has_init"
-
-        if has_init
-            # Try to create an instance using ffi_init
-            # TestObjectBase.__ffi_init__ takes (v_i64, v_f64, v_str)
-            try
-                obj = ffi_init(TestObjectBase, Int64(42), 3.14, "hello")
-                @test obj isa TestObjectBase
-                @test obj.handle != C_NULL
-
-                # Test field access
-                if any(f -> f.name == "v_i64", fields)
-                    @test obj.v_i64 == 42
-                end
-                if any(f -> f.name == "v_f64", fields)
-                    @test obj.v_f64 ≈ 3.14
-                end
-                if any(f -> f.name == "v_str", fields)
-                    @test obj.v_str == "hello"
-                end
-
-                # Test method call if add_i64 exists
-                if any(m -> m.name == "add_i64", methods)
-                    result = obj.add_i64(Int64(10))
-                    @test result == 52  # 42 + 10
-                end
-            catch e
-                @info "Failed to create TestObjectBase instance: $e"
-            end
-        end
-    else
-        @info "TestObjectBase has no reflection methods registered in C++"
-    end
+    # TestObjectBase does not have __ffi_init__, only add_i64
+    @test !has_ffi_init(TestObjectBase)
+    @test methods[1].name == "add_i64"
 end
 
-@testset "Field Setter" begin
-    # Test set_field_value! function
-    type_info = get_type_info("testing.TestObjectBase")
+@testset "Field Setter with TestCxxClassBase" begin
+    # Use TestCxxClassBase which has __ffi_init__ and writable fields
+    @register_object "testing.TestCxxClassBase" struct TestCxxClassBase end
 
-    if type_info !== nothing
-        fields = get_fields(type_info)
-        writable_fields = filter(f -> f.is_writable, fields)
+    @test has_ffi_init(TestCxxClassBase)
 
-        if length(writable_fields) > 0 && has_ffi_init(TestObjectBase)
-            # Create an object
-            obj = ffi_init(TestObjectBase, Int64(42), 3.14, "hello")
+    # Create an object
+    obj = TestCxxClassBase(Int64(42), Int32(10))
 
-            for field in writable_fields
-                @info "Field '$(field.name)' is writable"
-                # Test that we can set the field
-                # (actual value test depends on the field type)
-            end
-        else
-            @info "No writable fields or no __ffi_init__ available"
-        end
-    else
-        @info "testing.TestObjectBase not available"
-    end
+    # Verify initial values
+    @test obj.v_i64 == 42
+    @test obj.v_i32 == 10
+
+    # Test field setters
+    obj.v_i64 = Int64(100)
+    obj.v_i32 = Int32(20)
+
+    @test obj.v_i64 == 100
+    @test obj.v_i32 == 20
 end
 
 @testset "@register_object with Reflection" begin

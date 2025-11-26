@@ -72,13 +72,25 @@ mutable struct TVMObject
 end
 
 """
-    type_index(obj::TVMObject) -> Int32
+    type_index(obj) -> Int32
+    type_index(T::Type) -> Int32
 
-Get the type index of an object.
+Get the runtime type index of an object or the registered type index for a type.
+
+For objects, returns the actual runtime type index from the C++ object header.
+For types, returns the type index allocated during registration.
+
+# Examples
+```julia
+obj = TestCxxClassBase(42, 10)
+type_index(obj)              # Runtime index (e.g., 133)
+type_index(TestCxxClassBase) # Same as above for registered types
+type_index(TVMFunction)      # Built-in type index (68)
+```
 """
-function type_index(obj::TVMObject)
-    LibTVMFFI.TVMFFIObjectGetTypeIndex(obj.handle)
-end
+function type_index end
+
+type_index(obj::TVMObject) = LibTVMFFI.TVMFFIObjectGetTypeIndex(obj.handle)
 
 """
     is_type(obj::TVMObject, idx::LibTVMFFI.TVMFFITypeIndex) -> Bool
@@ -388,47 +400,6 @@ end
 # Section: Object Registration Macros
 #------------------------------------------------------------
 
-"""
-    @register_object type_key struct TypeName [<: ParentType] ... end
-
-Register a Julia struct as a TVM object type with automatic memory management.
-
-This macro generates:
-1. A mutable struct with a `handle` field for the TVM object handle
-2. A constructor that properly manages reference counting
-3. A finalizer for automatic cleanup
-4. Type index methods for runtime type queries
-
-# Arguments
-- `type_key`: The TVM type key (e.g., "testing.MyObject")
-- The struct definition (fields are for documentation only; actual field access
-  requires TVM reflection API support in C++)
-
-# Examples
-
-```julia
-# Basic usage - wrap existing TVM type
-@register_object "ffi.Module" struct Module end
-
-# With parent type annotation (for documentation)
-@register_object "testing.TestObject" struct TestObject <: TVMObjectBase
-    v_i64::Int64   # Field declaration (actual access via TVM)
-    v_f64::Float64
-end
-
-# After registration, create instances from handles:
-obj = TestObject(handle; borrowed=false)  # Take ownership
-obj = TestObject(handle; borrowed=true)   # Copy reference
-```
-
-# Notes
-- The type key must be registered on the C++ side first
-- Field declarations are informational; actual field access depends on
-  TVM's reflection API being available for that type
-- For types with `__ffi_init__`, use `get_global_func` to call constructors
-
-See also: [`register_object`](@ref), [`get_type_index`](@ref), [`type_index`](@ref)
-"""
 # Global cache for registered type indices (type -> index)
 const _registered_type_indices = Dict{DataType, Int32}()
 
@@ -471,6 +442,47 @@ function _get_reflection_cache(T::Type)
     end
 end
 
+"""
+    @register_object type_key struct TypeName [<: ParentType] ... end
+
+Register a Julia struct as a TVM object type with automatic memory management.
+
+This macro generates:
+1. A mutable struct with a `handle` field for the TVM object handle
+2. A constructor that properly manages reference counting
+3. A finalizer for automatic cleanup
+4. Type index methods for runtime type queries
+
+# Arguments
+- `type_key`: The TVM type key (e.g., "testing.MyObject")
+- The struct definition (fields are for documentation only; actual field access
+  requires TVM reflection API support in C++)
+
+# Examples
+
+```julia
+# Basic usage - wrap existing TVM type
+@register_object "ffi.Module" struct Module end
+
+# With parent type annotation (for documentation)
+@register_object "testing.TestObject" struct TestObject <: TVMObjectBase
+    v_i64::Int64   # Field declaration (actual access via TVM)
+    v_f64::Float64
+end
+
+# After registration, create instances from handles:
+obj = TestObject(handle; borrowed=false)  # Take ownership
+obj = TestObject(handle; borrowed=true)   # Copy reference
+```
+
+# Notes
+- The type key must be registered on the C++ side first
+- Field declarations are informational; actual field access depends on
+  TVM's reflection API being available for that type
+- For types with `__ffi_init__`, use `ffi_init(T, args...)` or `T(args...)` to create instances
+
+See also: [`register_object`](@ref), [`get_type_index`](@ref), [`type_index`](@ref)
+"""
 macro register_object(type_key, struct_def)
     # Parse the struct definition
     if !Meta.isexpr(struct_def, :struct)
@@ -650,6 +662,16 @@ macro register_object(type_key, struct_def)
 
         # Try to setup __ffi_init__ constructor
         _setup_ffi_init_constructor($(esc(type_name)), $(esc(type_key)))
+
+        # External constructor for ffi_init (args...) syntax
+        # This allows TypeName(arg1, arg2, ...) if __ffi_init__ exists
+        function (::Type{$(esc(type_name))})(args...; kwargs...)
+            if !has_ffi_init($(esc(type_name)))
+                error("$($(string(type_name))) does not have a __ffi_init__ constructor. " *
+                      "Use $($(string(type_name)))(handle; borrowed=...) instead.")
+            end
+            return ffi_init($(esc(type_name)), args...; kwargs...)
+        end
 
         # Return the type
         $(esc(type_name))

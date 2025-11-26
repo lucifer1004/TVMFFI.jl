@@ -12,32 +12,22 @@ Functions for loading modules and managing functions.
 load_module
 get_function
 system_lib
-write_to_file
-inspect_source
-get_module_kind
-implements_function
 get_global_func
 register_global_func
-Base.getindex
 ```
 
-## TensorViews & Data
+## Tensors & Data
 
 Core data structures for exchanging data with TVM.
 
 ```@docs
-TVMTensorView
+TVMTensor
+TensorView
+from_dlpack
 shape
 dtype
 device
-to_julia_array
-TensorView
-dtype_to_julia_type
 DLDataType
-DLDataTypeCode
-Base.size
-Base.ndims
-Base.length
 ```
 
 ## Devices
@@ -46,7 +36,6 @@ Device management and creation.
 
 ```@docs
 DLDevice
-DLDeviceType
 cpu
 cuda
 opencl
@@ -62,8 +51,6 @@ Helper functions for GPU support.
 ```@docs
 supports_gpu_backend
 list_available_gpu_backends
-print_gpu_info
-gpu_array_info
 ```
 
 ## Types
@@ -73,30 +60,97 @@ Core types used in the FFI.
 ```@docs
 TVMFunction
 TVMModule
-TVMObject
 TVMError
-TVMString
-TVMBytes
-register_object
-get_type_index
-Base.String
-Base.Vector
-```
-
-## Error Handling
-
-```@docs
-check_call
 TVMErrorKind
 ```
 
-## Low Level API
+## Object Registration
 
-Direct mappings to C API structures. Use `TVMTensorView` and `TVMFunction` for high-level access.
+Macros for registering Julia types as TVM objects.
 
 ```@docs
-DLTensor
-TensorView
+TVMFFI.@register_object
+TVMFFI.type_index
+TVMFFI.type_key
+```
+
+## Version
+
+```@docs
 tvm_ffi_version
+```
+
+---
+
+# Advanced API
+
+These APIs are available but not exported. Use `TVMFFI.xxx` to access them.
+
+## Low-Level Types
+
+```@docs
+TVMFFI.DLTensor
+TVMFFI.DLDeviceType
+TVMFFI.DLDataTypeCode
+TVMFFI.TVMObject
+TVMFFI.TVMString
+TVMFFI.TVMBytes
+```
+
+## Any Containers (Internal)
+
+```@docs
+TVMFFI.TVMAny
+TVMFFI.TVMAnyView
+TVMFFI.take_value
+TVMFFI.copy_value
+TVMFFI.raw_data
+```
+
+## Object Registration (Advanced)
+
+```@docs
+TVMFFI.register_object
+TVMFFI.get_type_index
+TVMFFI.@register_object_simple
+```
+
+## Reflection API
+
+```@docs
+TVMFFI.get_type_info
+TVMFFI.get_fields
+TVMFFI.get_methods
+TVMFFI.FieldInfo
+TVMFFI.MethodInfo
+TVMFFI.get_field_value
+TVMFFI.set_field_value!
+TVMFFI.call_method
+TVMFFI.get_method_function
+TVMFFI.has_ffi_init
+TVMFFI.ffi_init
+```
+
+## Module Introspection
+
+```@docs
+TVMFFI.write_to_file
+TVMFFI.inspect_source
+TVMFFI.get_module_kind
+TVMFFI.implements_function
+```
+
+## Internal Utilities
+
+```@docs
+TVMFFI.check_call
+TVMFFI.dtype_to_julia_type
+TVMFFI.print_gpu_info
+TVMFFI.gpu_array_info
+```
+
+## Low-Level C Bindings
+
+```@docs
 TVMFFI.LibTVMFFI
 ```
