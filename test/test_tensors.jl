@@ -58,16 +58,16 @@ end
 end
 
 @testset "Automatic Array Conversion" begin
-    # Test that to_tvm_any handles arrays automatically
+    # Test that TVMAny handles DLTensorHolder correctly
     x = Float32[1, 2, 3]
 
     # Should auto-convert AbstractArray to DLTensorHolder
     # (This is tested indirectly through function calls)
     holder = from_julia_array(x)
-    any_val = TVMFFI.to_tvm_any(holder)
+    any_val = TVMAny(holder)
 
-    @test any_val.type_index == Int32(LibTVMFFI.kTVMFFIDLTensorPtr)
-    @test any_val.data != 0
+    @test TVMFFI.type_index(any_val) == Int32(LibTVMFFI.kTVMFFIDLTensorPtr)
+    @test raw_data(any_val).data != 0
 end
 
 @testset "DLTensorHolder - Unified CPU/GPU" begin

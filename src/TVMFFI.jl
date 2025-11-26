@@ -50,6 +50,10 @@ export TVMTensor
 export TVMModule
 export TVMObject
 
+# Export Any/AnyView types (ownership-aware value containers)
+export TVMAny, TVMAnyView
+export take_value, copy_value, raw_data
+
 # Export error kinds
 export ValueError, TypeError, RuntimeError, AttributeError, KeyError, IndexError
 
@@ -72,6 +76,7 @@ export print_gpu_info, gpu_array_info
 
 # Include submodules in dependency order
 include("LibTVMFFI.jl")
+include("any.jl")                 # TVMAny/TVMAnyView - ownership-aware containers
 include("error.jl")
 include("dtype.jl")
 include("device.jl")

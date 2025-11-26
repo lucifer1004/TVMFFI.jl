@@ -54,36 +54,36 @@ function safe_call(
 
         # Convert arguments
         # NOTE: args from C are borrowed references (views)
-        # We must copy them (own=true) to avoid use-after-free when GC runs
+        # We use TVMAnyView to make ownership explicit, then copy_value to own them
         julia_args = Vector{Any}(undef, num_args)
         for i in 1:num_args
             # Pointer arithmetic to get i-th argument
             arg_ptr = args + (i - 1) * sizeof(LibTVMFFI.TVMFFIAny)
-            arg_any = unsafe_load(arg_ptr)
-            # Borrowed reference from C callback
-            julia_args[i] = from_tvm_any(arg_any; borrowed = true)
+            arg_raw = unsafe_load(arg_ptr)
+            # Create view (borrowed) then copy to own the value
+            view = TVMAnyView(arg_raw)
+            julia_args[i] = copy_value(view)
         end
 
         # Call function
         result = func(julia_args...)
 
-        # Convert result
-        # NOTE: For arrays, we need to keep the holder alive!
-        # Store it in a temporary registry that's cleared after C returns
+        # Convert result to TVMAny
+        # NOTE: For arrays, TVMAny(array) returns (any, holder) tuple
+        # The holder must be kept alive during the store
         result_holder = nothing
-
-        ret_any = if result isa AbstractArray && !(result isa DLTensorHolder)
-            # Create holder and keep it alive
+        result_any = if result isa AbstractArray && !(result isa DLTensorHolder)
+            # Create holder and TVMAny
             result_holder = from_julia_array(result)
-            to_tvm_any(result_holder)
+            TVMAny(result_holder)
         else
-            to_tvm_any(result)
+            TVMAny(result)
         end
 
         # Write result to ret pointer
         # CRITICAL: Must preserve result_holder during this store
-        GC.@preserve result_holder begin
-            unsafe_store!(ret, ret_any)
+        GC.@preserve result_holder result_any begin
+            unsafe_store!(ret, raw_data(result_any))
         end
 
         return 0
@@ -294,35 +294,43 @@ end
 ```
 """
 function (func::TVMFunction)(args...)
-    # Auto-convert AbstractArrays to DLTensorHolder
-    # This allows users to pass arrays directly for convenience,
-    # or pass pre-made holders for performance optimization
-    processed_args = Any[arg isa AbstractArray && !(arg isa DLTensorHolder) ?
-                         from_julia_array(arg) : arg for arg in args]
-
-    # Convert arguments to TVMFFIAny array
-    num_args = length(processed_args)
-    args_array = Vector{LibTVMFFI.TVMFFIAny}(undef, num_args)
-
-    for (i, arg) in enumerate(processed_args)
-        args_array[i] = to_tvm_any(arg)
+    num_args = length(args)
+    
+    # Convert arguments to TVMAny
+    # Arrays need special handling - they return (any, holder) tuples
+    args_any = Vector{TVMAny}(undef, num_args)
+    holders = Vector{Any}(undef, num_args)  # Keep holders alive
+    
+    for (i, arg) in enumerate(args)
+        if arg isa AbstractArray && !(arg isa DLTensorHolder)
+            holder = from_julia_array(arg)
+            args_any[i] = TVMAny(holder)
+            holders[i] = holder  # Keep holder alive
+        elseif arg isa DLTensorHolder
+            args_any[i] = TVMAny(arg)
+            holders[i] = arg  # Keep holder alive
+        else
+            args_any[i] = TVMAny(arg)
+            holders[i] = nothing
+        end
     end
+    
+    # Extract raw TVMFFIAny for C API
+    args_raw = [raw_data(a) for a in args_any]
 
     # Prepare result
     result = Ref{LibTVMFFI.TVMFFIAny}(LibTVMFFI.TVMFFIAny(Int32(LibTVMFFI.kTVMFFINone), 0, 0))
 
     # CRITICAL GC Safety:
-    # We must preserve BOTH the original args AND processed_args
-    # - args: contains original arrays (data source)
-    # - processed_args: contains holders (pointers extracted from these)
-    # The C call uses pointers from holders, which reference data in arrays
+    # We must preserve args_any and holders during the C call
+    # - args_any: managed TVMAny objects
+    # - holders: DLTensorHolders with array data
     local ret
-    GC.@preserve args processed_args begin
-        # Call function
+    GC.@preserve args args_any holders begin
         ret = if num_args > 0
             LibTVMFFI.TVMFFIFunctionCall(
                 func.handle,
-                pointer(args_array),
+                pointer(args_raw),
                 Int32(num_args),
                 Base.unsafe_convert(Ptr{LibTVMFFI.TVMFFIAny}, result)
             )
@@ -339,18 +347,12 @@ function (func::TVMFunction)(args...)
     check_call(ret)
 
     # Convert result back to Julia type
-    # Function return: C gives us ownership
-    julia_result = from_tvm_any(result[]; borrowed = false)
+    # Function return: C gives us ownership, use take_value
+    result_owned = TVMAny(result[])
+    julia_result = take_value(result_owned)
 
-    # Cleanup: decrease ref counts for object arguments we created
-    for arg_any in args_array
-        if arg_any.type_index >= Int32(LibTVMFFI.kTVMFFIStaticObjectBegin)
-            obj_ptr = reinterpret(LibTVMFFI.TVMFFIObjectHandle, arg_any.data)
-            if obj_ptr != C_NULL
-                LibTVMFFI.TVMFFIObjectDecRef(obj_ptr)
-            end
-        end
-    end
+    # No manual cleanup needed! 
+    # TVMAny finalizers will automatically DecRef when GC collects args_any
 
     return julia_result
 end

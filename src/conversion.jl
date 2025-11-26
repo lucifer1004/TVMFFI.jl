@@ -24,7 +24,7 @@ Julia ↔ TVM FFI ABI Boundary Layer
 
 This file centralizes all type conversions between Julia and TVM FFI.
 Keeping conversions in one place makes it easy to:
-- Verify symmetry between to_tvm_any() and from_tvm_any()
+- Verify symmetry between TVMAny(value) and take_value()/copy_value()
 - Update the ABI contract when TVM FFI changes
 - Audit reference counting for all object types
 
@@ -35,160 +35,267 @@ Design Philosophy (Linus style):
 """
 
 #=============================================================================
-  Julia → TVM FFI Any (Encoding)
+  Julia → TVMAny Constructors
+  
+  Creates managed TVMAny from Julia values.
+  - POD types: No reference counting needed
+  - Object types: IncRef + finalizer manages DecRef
 =============================================================================#
 
+# ---- POD Types (no reference counting) ----
+
 """
-    to_tvm_any(value) -> LibTVMFFI.TVMFFIAny
+    TVMAny(value::Int64)
 
-Convert Julia value to TVMFFIAny for passing to TVM functions.
-
-# Type Coverage
-- POD types: Int64, Float64, Bool
-- Device/dtype: DLDevice, DLDataType
-- Strings: TVMString, AbstractString
-- Objects: TVMFunction, TVMObject, TVMModule, TVMTensor
-- Tensors: DLTensorHolder, AbstractArray
-- Special: Nothing (null)
+Create a TVMAny from an integer value.
 """
-function to_tvm_any(value::Int64)
-    # POD type - no refcounting
-    LibTVMFFI.TVMFFIAny(Int32(LibTVMFFI.kTVMFFIInt), 0, reinterpret(UInt64, value))
+function TVMAny(value::Int64)
+    raw = LibTVMFFI.TVMFFIAny(Int32(LibTVMFFI.kTVMFFIInt), 0, reinterpret(UInt64, value))
+    TVMAny(raw, Val(:no_finalizer))
 end
 
-function to_tvm_any(value::Float64)
-    # POD type - no refcounting
-    LibTVMFFI.TVMFFIAny(Int32(LibTVMFFI.kTVMFFIFloat), 0, reinterpret(UInt64, value))
+"""
+    TVMAny(value::Float64)
+
+Create a TVMAny from a floating-point value.
+"""
+function TVMAny(value::Float64)
+    raw = LibTVMFFI.TVMFFIAny(Int32(LibTVMFFI.kTVMFFIFloat), 0, reinterpret(UInt64, value))
+    TVMAny(raw, Val(:no_finalizer))
 end
 
-function to_tvm_any(value::Bool)
-    # POD type - no refcounting
-    LibTVMFFI.TVMFFIAny(Int32(LibTVMFFI.kTVMFFIBool), 0, UInt64(value))
+"""
+    TVMAny(value::Bool)
+
+Create a TVMAny from a boolean value.
+"""
+function TVMAny(value::Bool)
+    raw = LibTVMFFI.TVMFFIAny(Int32(LibTVMFFI.kTVMFFIBool), 0, UInt64(value))
+    TVMAny(raw, Val(:no_finalizer))
 end
 
-function to_tvm_any(value::DLDevice)
-    # POD type - no refcounting
+"""
+    TVMAny(::Nothing)
+
+Create a TVMAny representing None/null.
+"""
+function TVMAny(::Nothing)
+    raw = LibTVMFFI.TVMFFIAny(Int32(LibTVMFFI.kTVMFFINone), 0, 0)
+    TVMAny(raw, Val(:no_finalizer))
+end
+
+"""
+    TVMAny(value::DLDevice)
+
+Create a TVMAny from a device descriptor.
+"""
+function TVMAny(value::DLDevice)
     packed = UInt64(value.device_type) | (UInt64(value.device_id) << 32)
-    LibTVMFFI.TVMFFIAny(Int32(LibTVMFFI.kTVMFFIDevice), 0, packed)
+    raw = LibTVMFFI.TVMFFIAny(Int32(LibTVMFFI.kTVMFFIDevice), 0, packed)
+    TVMAny(raw, Val(:no_finalizer))
 end
 
-function to_tvm_any(value::DLDataType)
-    # POD type - no refcounting
+"""
+    TVMAny(value::DLDataType)
+
+Create a TVMAny from a data type descriptor.
+"""
+function TVMAny(value::DLDataType)
     packed = UInt64(value.code) | (UInt64(value.bits) << 8) | (UInt64(value.lanes) << 16)
-    LibTVMFFI.TVMFFIAny(Int32(LibTVMFFI.kTVMFFIDataType), 0, packed)
+    raw = LibTVMFFI.TVMFFIAny(Int32(LibTVMFFI.kTVMFFIDataType), 0, packed)
+    TVMAny(raw, Val(:no_finalizer))
 end
 
-function to_tvm_any(value::TVMString)
-    # Object type - create new reference
+# ---- Object Types (IncRef + finalizer DecRef) ----
+
+"""
+    TVMAny(value::TVMString)
+
+Create a TVMAny from a TVM string. Increments reference count.
+"""
+function TVMAny(value::TVMString)
+    # IncRef for object types
     if value.data.type_index >= Int32(LibTVMFFI.kTVMFFIStaticObjectBegin)
         obj_ptr = reinterpret(LibTVMFFI.TVMFFIObjectHandle, value.data.data)
         if obj_ptr != C_NULL
             LibTVMFFI.TVMFFIObjectIncRef(obj_ptr)
         end
     end
-    return value.data
+    # Use main constructor which registers finalizer for objects
+    TVMAny(value.data)
 end
 
-function to_tvm_any(value::AbstractString)
-    # Convert to TVMString then to Any
-    to_tvm_any(TVMString(value))
+"""
+    TVMAny(value::AbstractString)
+
+Create a TVMAny from a Julia string (converts to TVMString first).
+"""
+function TVMAny(value::AbstractString)
+    TVMAny(TVMString(value))
 end
 
-function to_tvm_any(value::TVMFunction)
-    # Object type - create new reference
+"""
+    TVMAny(value::TVMFunction)
+
+Create a TVMAny from a TVM function. Increments reference count.
+"""
+function TVMAny(value::TVMFunction)
     if value.handle != C_NULL
         LibTVMFFI.TVMFFIObjectIncRef(value.handle)
     end
-    LibTVMFFI.TVMFFIAny(
+    raw = LibTVMFFI.TVMFFIAny(
         Int32(LibTVMFFI.kTVMFFIFunction),
         0,
         reinterpret(UInt64, value.handle)
     )
+    TVMAny(raw)  # Main constructor registers finalizer
 end
 
-function to_tvm_any(value::TVMObject)
-    # Generic object - create new reference
+"""
+    TVMAny(value::TVMObject)
+
+Create a TVMAny from a generic TVM object. Increments reference count.
+"""
+function TVMAny(value::TVMObject)
     if value.handle != C_NULL
         LibTVMFFI.TVMFFIObjectIncRef(value.handle)
     end
-    LibTVMFFI.TVMFFIAny(type_index(value), 0, reinterpret(UInt64, value.handle))
+    raw = LibTVMFFI.TVMFFIAny(type_index(value), 0, reinterpret(UInt64, value.handle))
+    TVMAny(raw)  # Main constructor registers finalizer
 end
 
-function to_tvm_any(value::TVMModule)
-    # Module is a wrapper around TVMObject handle
-    to_tvm_any(value.handle)
+"""
+    TVMAny(value::TVMModule)
+
+Create a TVMAny from a TVM module.
+"""
+function TVMAny(value::TVMModule)
+    TVMAny(value.handle)
 end
 
-function to_tvm_any(::Nothing)
-    # Special value - no refcounting
-    LibTVMFFI.TVMFFIAny(Int32(LibTVMFFI.kTVMFFINone), 0, 0)
-end
+# ---- Tensor Types (pointer-based, no refcounting) ----
 
-function to_tvm_any(value::Base.RefValue{DLTensor})
-    # Pointer type - no refcounting (borrowed reference)
-    LibTVMFFI.TVMFFIAny(
+"""
+    TVMAny(value::Base.RefValue{DLTensor})
+
+Create a TVMAny from a DLTensor reference.
+"""
+function TVMAny(value::Base.RefValue{DLTensor})
+    raw = LibTVMFFI.TVMFFIAny(
         Int32(LibTVMFFI.kTVMFFIDLTensorPtr),
         0,
         reinterpret(UInt64, Base.unsafe_convert(Ptr{DLTensor}, value))
     )
+    TVMAny(raw, Val(:no_finalizer))
 end
 
-function to_tvm_any(holder::DLTensorHolder)
-    # Convert holder to DLTensor pointer
-    # Holder keeps data alive, we just borrow the reference
-    # Use unsafe_convert which we defined for DLTensorHolder
+"""
+    TVMAny(holder::DLTensorHolder)
+
+Create a TVMAny from a DLTensorHolder.
+
+Note: The holder must be kept alive while this TVMAny is used!
+"""
+function TVMAny(holder::DLTensorHolder)
     tensor_ptr = Base.unsafe_convert(Ptr{DLTensor}, holder)
-    LibTVMFFI.TVMFFIAny(
+    raw = LibTVMFFI.TVMFFIAny(
         Int32(LibTVMFFI.kTVMFFIDLTensorPtr),
         0,
         reinterpret(UInt64, tensor_ptr)
     )
+    TVMAny(raw, Val(:no_finalizer))
 end
 
-function to_tvm_any(value::AbstractArray)
-    # Auto-convert array to DLTensorHolder then to Any
-    # This allows Julia functions to return arrays directly
+"""
+    TVMAny(value::AbstractArray)
+
+Create a TVMAny from a Julia array (converts to DLTensorHolder first).
+
+Note: Returns a tuple (any, holder) - the holder must be kept alive!
+"""
+function TVMAny(value::AbstractArray)
     holder = from_julia_array(value)
-    return to_tvm_any(holder)
+    any = TVMAny(holder)
+    return any, holder  # Caller must GC.@preserve holder
 end
 
 #=============================================================================
   TVM FFI Any → Julia (Decoding)
+  
+  Two main APIs:
+  - take_value(any::TVMAny) - Extract from owned value (no IncRef needed)
+  - copy_value(view::TVMAnyView) - Extract from borrowed view (needs copy/IncRef)
 =============================================================================#
 
 """
-    from_tvm_any(any::LibTVMFFI.TVMFFIAny; borrowed::Bool = false) -> Any
+    take_value(any::TVMAny) -> Any
 
-Convert TVMFFIAny back to Julia value with configurable reference semantics.
+Extract the Julia value from an owned TVMAny, consuming ownership.
 
-# Arguments
-- `any`: The TVMFFIAny value to convert
-- `borrowed`: Reference borrowing semantics
-  - `borrowed=false` (default): C gave us ownership, take it without IncRef
-  - `borrowed=true`: C lent us a reference, copy it with IncRef
+The TVMAny already owns the reference (or it's a POD type).
+For object types, the returned wrapper takes over reference management.
+After this call, the TVMAny is invalidated and will not DecRef.
 
-# Usage Patterns
-- **Function returns**: `from_tvm_any(result; borrowed=false)` - C gave us a new reference
-- **Callback arguments**: `from_tvm_any(arg; borrowed=true)` - C lent us a borrowed reference
-
-# Examples
+# Usage
 ```julia
-# Pattern 1: Function return (we own the reference)
-result = func(x)
-value = from_tvm_any(result; borrowed=false)  # Take ownership
-
-# Pattern 2: Callback argument (we borrow the reference)
-function my_callback(arg_any)
-    value = from_tvm_any(arg_any; borrowed=true)  # Copy reference
-end
+# Function return - already owned
+result_any = TVMAny(raw_result)
+value = take_value(result_any)
+# result_any is now invalid
 ```
 
-# Note
-The parameter name `borrowed` is clearer than `own` because:
-- `borrowed=true` → "This is borrowed, I must copy it" (clear!)
-- `own=true` → "I own it?" (ambiguous - sounds like taking ownership but actually copies)
+# Warning
+After calling take_value, the TVMAny is invalidated. Do not use it again.
 """
-function from_tvm_any(any::LibTVMFFI.TVMFFIAny; borrowed::Bool = false)
+function take_value(any::TVMAny)
+    data = any.data
+    
+    # Invalidate the TVMAny to prevent finalizer from DecRef
+    # This transfers ownership to the returned wrapper
+    if data.type_index >= Int32(LibTVMFFI.kTVMFFIStaticObjectBegin)
+        # Clear the data so finalizer won't DecRef
+        any.data = LibTVMFFI.TVMFFIAny(Int32(LibTVMFFI.kTVMFFINone), 0, 0)
+    end
+    
+    _extract_value(data, false)
+end
+
+"""
+    copy_value(view::TVMAnyView) -> Any
+
+Extract the Julia value from a borrowed view, copying if necessary.
+
+For object types, this uses the official `TVMFFIAnyViewToOwnedAny` C API
+to increment the reference count, ensuring the returned value is
+independent of the original view's lifetime.
+
+# Usage
+```julia
+# Callback argument - borrowed, need to copy
+function my_callback(view::TVMAnyView)
+    value = copy_value(view)  # Safe to use after callback returns
+    return value
+end
+```
+"""
+function copy_value(view::TVMAnyView)
+    # Use official C API to convert view → owned
+    ret, owned_raw = LibTVMFFI.TVMFFIAnyViewToOwnedAny(view.data)
+    if ret != 0
+        error("Failed to copy AnyView to owned Any (ret=$ret)")
+    end
+    # owned_raw is now IncRef'd, extract without additional IncRef
+    _extract_value(owned_raw, false)
+end
+
+"""
+Internal implementation: extract Julia value from raw TVMFFIAny.
+
+# Arguments
+- `any`: Raw TVMFFIAny data
+- `borrowed`: If true, IncRef object types to copy the reference
+"""
+function _extract_value(any::LibTVMFFI.TVMFFIAny, borrowed::Bool)
     type_idx = any.type_index
 
     if type_idx == Int32(LibTVMFFI.kTVMFFINone)
@@ -227,7 +334,7 @@ function from_tvm_any(any::LibTVMFFI.TVMFFIAny; borrowed::Bool = false)
         # Practical choice: Always copy. Safe and simple. Performance is acceptable
         # for typical callback data sizes.
         tensor_ptr = reinterpret(Ptr{DLTensor}, any.data)
-        tensor_ptr == C_NULL && error("NULL DLTensor pointer in from_tvm_any")
+        tensor_ptr == C_NULL && error("NULL DLTensor pointer in _extract_value")
 
         # SAFETY: Read DLTensor metadata (no pointers escaped yet)
         dltensor = unsafe_load(tensor_ptr)

@@ -5,7 +5,7 @@ This is the main test runner. Individual test files are organized by functionali
 - test_dtype_device.jl:   Device and DataType APIs
 - test_string_bytes.jl:   TVM String and Bytes
 - test_error.jl:          Error handling
-- test_conversions.jl:    Type conversions (to_tvm_any/from_tvm_any)
+- test_conversions.jl:    Type conversions (TVMAny/take_value/copy_value)
 - test_functions.jl:      Function registration and calling
 - test_objects.jl:        Object registration
 - test_tensors.jl:        DLTensor and array handling

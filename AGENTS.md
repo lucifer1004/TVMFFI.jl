@@ -37,7 +37,7 @@ The immediate goal is to reach feature parity with Python/Rust bindings. See `..
 We need to allow Julia functions to be called by TVM.
 1.  ✅ **`CallbackFunctionObjImpl`**: Implemented via `safe_call` C callback with Julia function registry.
 2.  ✅ **`register_global_func`**: Fully functional API that registers Julia functions into TVM global registry.
-3.  ✅ **Argument Conversion**: Both `from_tvm_any` and `to_tvm_any` work for all major types (int, float, bool, string, objects).
+3.  ✅ **Argument Conversion**: `to_tvm_any`, `take_value`, and `copy_value` work for all major types (int, float, bool, string, objects).
 4.  ✅ **Exception Handling**: Julia exceptions are properly caught and translated to TVM errors.
 
 ### Priority 2: Object Registration ⚠️ Partially Complete
@@ -60,6 +60,8 @@ Allow defining custom TVM objects in Julia.
 ## Directory Structure
 -   `src/LibTVMFFI.jl`: Low-level C bindings (generated/maintained manually).
 -   `src/TVMFFI.jl`: Main entry point.
+-   `src/any.jl`: TVMAny/TVMAnyView ownership-aware containers. **NEW**
+-   `src/conversion.jl`: ABI boundary layer (to_tvm_any, take_value, copy_value).
 -   `src/function.jl`: Function wrappers. **Focus here for Priority 1.**
 -   `src/object.jl`: Object wrappers. **Focus here for Priority 2.**
 -   `docs/`: Documentation source and build scripts.
@@ -174,8 +176,48 @@ end
 |-------|-----|------|--------|
 | `TVMObject(h; borrowed=false)` | `ObjectPtrFromOwned(h)` | `ObjectArc::from_raw(h)` | Direct assign to `.chandle` |
 | `TVMObject(h; borrowed=true)` | `ObjectPtrFromUnowned(h)` | Clone after `from_raw` | `TVMFFIAnyViewToOwnedAny` |
-| `from_tvm_any(; borrowed=false)` | Return from function | `Any::from_raw_ffi_any` | `make_ret(result)` |
-| `from_tvm_any(; borrowed=true)` | Callback arg handling | `T::copy_from_any_view` | `TVMFFIAnyViewToOwnedAny` |
+| `take_value(TVMAny(raw))` | Return from function | `Any::from_raw_ffi_any` | `make_ret(result)` |
+| `copy_value(TVMAnyView(raw))` | Callback arg handling | `T::copy_from_any_view` | `TVMFFIAnyViewToOwnedAny` |
+
+#### 3.1 TVMAny/TVMAnyView Type System (NEW)
+
+> **Added**: 2025-11-26
+> **Inspired by**: Rust's `Any` and `AnyView<'a>` types
+
+Julia now has ownership-aware value containers that make reference semantics explicit at the type level:
+
+```julia
+# TVMAnyView - Borrowed view (no lifetime management)
+# Use for callback arguments, temporary access
+view = TVMAnyView(raw_any)
+value = copy_value(view)  # Copies reference (IncRef for objects)
+
+# TVMAny - Owned value (manages reference count)
+# Use for function returns, storing values
+owned = TVMAny(raw_any)
+value = take_value(owned)  # Takes ownership, invalidates `owned`
+
+# Convert view to owned (uses TVMFFIAnyViewToOwnedAny C API)
+owned = TVMAny(view)
+```
+
+**Key Design Decisions**:
+
+1. **`take_value` invalidates `TVMAny`**: After `take_value(any)`, the TVMAny's data is cleared to prevent double-free. The returned wrapper takes over reference management.
+
+2. **`copy_value` is always safe**: Uses `TVMFFIAnyViewToOwnedAny` C API to properly handle all type conversions (objects, raw strings, byte arrays, rvalue refs). Original view remains valid.
+
+**Usage in function.jl**:
+
+```julia
+# Callback arguments - use TVMAnyView + copy_value
+view = TVMAnyView(unsafe_load(arg_ptr))
+julia_args[i] = copy_value(view)
+
+# Function returns - use TVMAny + take_value
+result_owned = TVMAny(result[])
+julia_result = take_value(result_owned)
+```
 
 #### 4. Common Pitfalls
 
