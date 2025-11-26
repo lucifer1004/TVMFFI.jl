@@ -83,3 +83,9 @@ end
     # GPU arrays would create the same TensorView type
     # just with different device_type in the tensor
 end
+
+@testset "TVMTensor Type System" begin
+    # Test type_index and type_key for TVMTensor
+    @test type_index(TVMTensor) == Int32(LibTVMFFI.kTVMFFITensor)
+    @test type_key(TVMTensor) == "ffi.Tensor"
+end

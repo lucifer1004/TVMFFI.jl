@@ -255,3 +255,8 @@ function implements_function(mod::TVMModule, name::AbstractString, query_imports
     result = impl_func(mod.handle, String(name), query_imports)
     return Bool(result)
 end
+
+# Type system integration for TVMModule
+type_index(mod::TVMModule) = type_index(mod.handle)
+type_index(::Type{TVMModule}) = Int32(LibTVMFFI.kTVMFFIModule)
+type_key(::Type{TVMModule}) = "ffi.Module"

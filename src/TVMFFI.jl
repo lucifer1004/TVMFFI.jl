@@ -60,7 +60,8 @@ export ValueError, TypeError, RuntimeError, AttributeError, KeyError, IndexError
 # Export utility functions
 export check_call, shape, dtype, device
 export get_global_func, register_global_func
-export register_object, get_type_index
+export register_object, get_type_index, type_index, type_key
+export @register_object, @register_object_simple
 export to_julia_array
 export cpu, cuda, opencl, vulkan, metal, rocm
 export tvm_ffi_version, dtype_to_julia_type

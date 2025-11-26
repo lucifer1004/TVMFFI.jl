@@ -169,3 +169,8 @@ end
 function Base.showerror(io::IO, e::TVMError)
     show(io, e)
 end
+
+# Type system integration for TVMError
+type_index(err::TVMError) = LibTVMFFI.TVMFFIObjectGetTypeIndex(err.handle)
+type_index(::Type{TVMError}) = Int32(LibTVMFFI.kTVMFFIError)
+type_key(::Type{TVMError}) = "ffi.Error"

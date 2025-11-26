@@ -7,6 +7,18 @@
     @test func === nothing
 end
 
+@testset "TVMFunction Type System" begin
+    # Test type_index and type_key for TVMFunction
+    @test type_index(TVMFunction) == Int32(LibTVMFFI.kTVMFFIFunction)
+    @test type_key(TVMFunction) == "ffi.Function"
+
+    # Test instance type_index
+    echo_func = get_global_func("testing.echo")
+    if echo_func !== nothing
+        @test type_index(echo_func) == Int32(LibTVMFFI.kTVMFFIFunction)
+    end
+end
+
 @testset "Function Registration" begin
     # Test basic function registration
     function test_add(x::Int64, y::Int64)

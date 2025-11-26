@@ -17,4 +17,9 @@
         err = TVMError(ValueError, "thrown error", "")
         throw(err)
     end
+
+    # Test type_index and type_key
+    @test type_index(TVMError) == Int32(LibTVMFFI.kTVMFFIError)
+    @test type_key(TVMError) == "ffi.Error"
+    @test type_index(err) == Int32(LibTVMFFI.kTVMFFIError)
 end

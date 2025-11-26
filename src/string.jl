@@ -216,3 +216,15 @@ Base.length(b::TVMBytes) = length(Vector{UInt8}(b))
 Base.sizeof(b::TVMBytes) = sizeof(Vector{UInt8}(b))
 
 Base.show(io::IO, b::TVMBytes) = print(io, "TVMBytes(", Vector{UInt8}(b), ")")
+
+# Type system integration for TVMString
+# TVMString can be either small string (inline) or heap-allocated
+type_index(s::TVMString) = s.data.type_index
+type_index(::Type{TVMString}) = Int32(LibTVMFFI.kTVMFFIStr)  # Canonical type
+type_key(::Type{TVMString}) = "ffi.Str"
+
+# Type system integration for TVMBytes
+# TVMBytes can be either small bytes (inline) or heap-allocated
+type_index(b::TVMBytes) = b.data.type_index
+type_index(::Type{TVMBytes}) = Int32(LibTVMFFI.kTVMFFIBytes)  # Canonical type
+type_key(::Type{TVMBytes}) = "ffi.Bytes"

@@ -445,3 +445,8 @@ function Base.unsafe_convert(::Type{Ptr{DLTensor}}, view::TensorView)
     return Ptr{DLTensor}(pointer_from_objref(view))
 end
 
+# Type system integration for TVMTensor
+type_index(tensor::TVMTensor) = LibTVMFFI.TVMFFIObjectGetTypeIndex(tensor.handle)
+type_index(::Type{TVMTensor}) = Int32(LibTVMFFI.kTVMFFITensor)
+type_key(::Type{TVMTensor}) = "ffi.Tensor"
+

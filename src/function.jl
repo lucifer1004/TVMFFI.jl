@@ -167,6 +167,11 @@ mutable struct TVMFunction
     end
 end
 
+# Type system integration for TVMFunction
+type_index(func::TVMFunction) = LibTVMFFI.TVMFFIObjectGetTypeIndex(func.handle)
+type_index(::Type{TVMFunction}) = Int32(LibTVMFFI.kTVMFFIFunction)
+type_key(::Type{TVMFunction}) = "ffi.Function"
+
 """
     get_global_func(name::AbstractString) -> Union{TVMFunction, Nothing}
 

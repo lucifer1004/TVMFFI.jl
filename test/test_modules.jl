@@ -31,3 +31,13 @@ end
     result = implements_function(mod, "nonexistent_function_12345", false)
     @test result isa Bool
 end
+
+@testset "TVMModule Type System" begin
+    # Test type_index and type_key for TVMModule
+    @test type_index(TVMModule) == Int32(LibTVMFFI.kTVMFFIModule)
+    @test type_key(TVMModule) == "ffi.Module"
+
+    # Test instance type_index
+    mod = system_lib()
+    @test type_index(mod) == Int32(LibTVMFFI.kTVMFFIModule)
+end
