@@ -166,6 +166,187 @@ Get the type key for a registered Julia type. Returns nothing if not registered.
 """
 function type_key end
 
+#------------------------------------------------------------
+# Section: Reflection API
+#------------------------------------------------------------
+
+"""
+    get_type_info(type_index::Int32) -> Union{LibTVMFFI.TVMFFITypeInfo, Nothing}
+
+Get the type information for a given type index.
+Returns nothing if the type index is invalid.
+"""
+function get_type_info(type_index::Int32)
+    ptr = LibTVMFFI.TVMFFIGetTypeInfo(type_index)
+    if ptr == C_NULL
+        return nothing
+    end
+    return unsafe_load(ptr)
+end
+
+"""
+    get_type_info(type_key::String) -> Union{LibTVMFFI.TVMFFITypeInfo, Nothing}
+
+Get the type information for a given type key.
+"""
+function get_type_info(type_key::String)
+    try
+        idx = get_type_index(type_key)
+        return get_type_info(idx)
+    catch
+        return nothing
+    end
+end
+
+"""
+    FieldInfo
+
+Julia wrapper for TVMFFIFieldInfo with convenient accessors.
+"""
+struct FieldInfo
+    name::String
+    doc::String
+    metadata::String
+    flags::Int64
+    is_writable::Bool
+    has_default::Bool
+    getter::Ptr{Cvoid}
+    setter::Ptr{Cvoid}
+    static_type_index::Int32
+end
+
+function FieldInfo(info::LibTVMFFI.TVMFFIFieldInfo)
+    name = unsafe_string(info.name.data, info.name.size)
+    doc = info.doc.data == C_NULL ? "" : unsafe_string(info.doc.data, info.doc.size)
+    metadata = info.metadata.data == C_NULL ? "" : unsafe_string(info.metadata.data, info.metadata.size)
+
+    FieldInfo(
+        name, doc, metadata, info.flags,
+        (info.flags & LibTVMFFI.kTVMFFIFieldFlagBitMaskWritable) != 0,
+        (info.flags & LibTVMFFI.kTVMFFIFieldFlagBitMaskHasDefault) != 0,
+        info.getter, info.setter, info.field_static_type_index
+    )
+end
+
+"""
+    MethodInfo
+
+Julia wrapper for TVMFFIMethodInfo with convenient accessors.
+"""
+struct MethodInfo
+    name::String
+    doc::String
+    metadata::String
+    flags::Int64
+    is_static::Bool
+    method_handle::LibTVMFFI.TVMFFIObjectHandle  # Stored as handle, converted to TVMFunction on call
+end
+
+function MethodInfo(info::LibTVMFFI.TVMFFIMethodInfo)
+    name = unsafe_string(info.name.data, info.name.size)
+    doc = info.doc.data == C_NULL ? "" : unsafe_string(info.doc.data, info.doc.size)
+    metadata = info.metadata.data == C_NULL ? "" : unsafe_string(info.metadata.data, info.metadata.size)
+
+    # Extract the method handle from TVMFFIAny
+    method_handle = reinterpret(LibTVMFFI.TVMFFIObjectHandle, info.method.data)
+    # IncRef because we're keeping a reference
+    if method_handle != C_NULL
+        LibTVMFFI.TVMFFIObjectIncRef(method_handle)
+    end
+
+    MethodInfo(
+        name, doc, metadata, info.flags,
+        (info.flags & LibTVMFFI.kTVMFFIMethodFlagBitMaskStatic) != 0,
+        method_handle
+    )
+end
+
+# get_method_function is defined in function.jl after TVMFunction is available
+
+"""
+    get_fields(type_info::LibTVMFFI.TVMFFITypeInfo) -> Vector{FieldInfo}
+
+Get all fields defined for a type.
+"""
+function get_fields(type_info::LibTVMFFI.TVMFFITypeInfo)
+    fields = FieldInfo[]
+    if type_info.num_fields > 0 && type_info.fields != C_NULL
+        for i in 1:type_info.num_fields
+            field_ptr = type_info.fields + (i - 1) * sizeof(LibTVMFFI.TVMFFIFieldInfo)
+            field = unsafe_load(Ptr{LibTVMFFI.TVMFFIFieldInfo}(field_ptr))
+            push!(fields, FieldInfo(field))
+        end
+    end
+    return fields
+end
+
+"""
+    get_methods(type_info::LibTVMFFI.TVMFFITypeInfo) -> Vector{MethodInfo}
+
+Get all methods defined for a type.
+"""
+function get_methods(type_info::LibTVMFFI.TVMFFITypeInfo)
+    methods = MethodInfo[]
+    if type_info.num_methods > 0 && type_info.methods != C_NULL
+        for i in 1:type_info.num_methods
+            method_ptr = type_info.methods + (i - 1) * sizeof(LibTVMFFI.TVMFFIMethodInfo)
+            method = unsafe_load(Ptr{LibTVMFFI.TVMFFIMethodInfo}(method_ptr))
+            push!(methods, MethodInfo(method))
+        end
+    end
+    return methods
+end
+
+"""
+    get_field_value(obj, field::FieldInfo) -> Any
+
+Read a field value from an object using the reflection getter.
+"""
+function get_field_value(obj, field::FieldInfo)
+    if field.getter == C_NULL
+        error("Field '$(field.name)' has no getter")
+    end
+
+    # Get pointer to the field within the object
+    # Field offset is from the start of the object data (after TVMFFIObject header)
+    handle = getfield(obj, :handle)
+
+    # Create result Any for the getter
+    result = Ref{LibTVMFFI.TVMFFIAny}()
+
+    # Call the getter: int (*getter)(void* field, TVMFFIAny* result)
+    ret = ccall(field.getter, Cint, (Ptr{Cvoid}, Ptr{LibTVMFFI.TVMFFIAny}), handle, result)
+
+    if ret != 0
+        error("Failed to get field '$(field.name)'")
+    end
+
+    # Convert result to Julia value
+    return copy_value(TVMAnyView(result[]))
+end
+
+"""
+    call_method(obj, method::MethodInfo, args...) -> Any
+
+Call a method on an object.
+For instance methods, obj is automatically prepended to the arguments.
+"""
+function call_method(obj, method::MethodInfo, args...)
+    method_func = get_method_function(method)
+    if method.is_static
+        return method_func(args...)
+    else
+        # Instance method: prepend self
+        handle = getfield(obj, :handle)
+        tvm_obj = TVMObject(handle; borrowed=true)
+        return method_func(tvm_obj, args...)
+    end
+end
+
+#------------------------------------------------------------
+# Section: Object Registration Macros
+#------------------------------------------------------------
+
 """
     @register_object type_key struct TypeName [<: ParentType] ... end
 
@@ -210,6 +391,45 @@ See also: [`register_object`](@ref), [`get_type_index`](@ref), [`type_index`](@r
 # Global cache for registered type indices (type -> index)
 const _registered_type_indices = Dict{DataType, Int32}()
 
+# Global cache for reflection info (type -> (fields, methods))
+const _reflection_cache = Dict{DataType, Tuple{Vector{FieldInfo}, Vector{MethodInfo}}}()
+const _reflection_cache_lock = ReentrantLock()
+
+"""
+    _get_reflection_cache(T::Type) -> Tuple{Vector{FieldInfo}, Vector{MethodInfo}}
+
+Get cached reflection info for a type. Thread-safe with lazy initialization.
+"""
+function _get_reflection_cache(T::Type)
+    lock(_reflection_cache_lock) do
+        if haskey(_reflection_cache, T)
+            return _reflection_cache[T]
+        end
+
+        # Try to get type info
+        idx = get(_registered_type_indices, T, nothing)
+        if idx === nothing
+            # Type not registered, return empty
+            result = (FieldInfo[], MethodInfo[])
+            _reflection_cache[T] = result
+            return result
+        end
+
+        type_info = get_type_info(idx)
+        if type_info === nothing
+            result = (FieldInfo[], MethodInfo[])
+            _reflection_cache[T] = result
+            return result
+        end
+
+        fields = get_fields(type_info)
+        methods = get_methods(type_info)
+        result = (fields, methods)
+        _reflection_cache[T] = result
+        return result
+    end
+end
+
 macro register_object(type_key, struct_def)
     # Parse the struct definition
     if !Meta.isexpr(struct_def, :struct)
@@ -246,7 +466,7 @@ macro register_object(type_key, struct_def)
 
     # Generate the struct and registration code
     quote
-        # The actual mutable struct with handle
+        # The actual mutable struct with handle and reflection cache
         mutable struct $(esc(type_name))
             handle::LibTVMFFI.TVMFFIObjectHandle
 
@@ -318,6 +538,76 @@ macro register_object(type_key, struct_def)
         # Show method
         function Base.show(io::IO, obj::$(esc(type_name)))
             print(io, $(string(type_name)), "(type_index=", TVMFFI.type_index(obj), ")")
+        end
+
+        # Reflection-based property access using global cache
+        function Base.getproperty(obj::$(esc(type_name)), name::Symbol)
+            # Handle the internal handle field
+            if name === :handle
+                return getfield(obj, :handle)
+            end
+
+            # Look up in global reflection cache
+            fields, methods = _get_reflection_cache($(esc(type_name)))
+
+            name_str = String(name)
+
+            # Check fields first
+            for field in fields
+                if field.name == name_str
+                    return get_field_value(obj, field)
+                end
+            end
+
+            # Check methods
+            for method in methods
+                if method.name == name_str
+                    # Return a bound method (closure that captures obj)
+                    if method.is_static
+                        method_func = get_method_function(method)
+                        return (args...) -> method_func(args...)
+                    else
+                        return (args...) -> call_method(obj, method, args...)
+                    end
+                end
+            end
+
+            error("$($(string(type_name))) has no property '$name'")
+        end
+
+        function Base.setproperty!(obj::$(esc(type_name)), name::Symbol, value)
+            if name === :handle
+                error("Cannot modify handle field")
+            end
+
+            fields, _ = _get_reflection_cache($(esc(type_name)))
+            name_str = String(name)
+
+            for field in fields
+                if field.name == name_str
+                    if !field.is_writable
+                        error("Field '$name' is read-only")
+                    end
+                    # TODO: Implement field setter
+                    error("Field setting not yet implemented")
+                end
+            end
+
+            error("$($(string(type_name))) has no property '$name'")
+        end
+
+        function Base.propertynames(obj::$(esc(type_name)), private::Bool=false)
+            names = Symbol[:handle]
+            fields, methods = _get_reflection_cache($(esc(type_name)))
+
+            for field in fields
+                push!(names, Symbol(field.name))
+            end
+            for method in methods
+                push!(names, Symbol(method.name))
+            end
+
+            return tuple(names...)
         end
 
         # Return the type

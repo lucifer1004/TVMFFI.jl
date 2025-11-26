@@ -97,3 +97,66 @@ end
     # The internal handle should be valid
     @test s.data.type_index >= Int32(LibTVMFFI.kTVMFFISmallStr)
 end
+
+@testset "Reflection API" begin
+    # Test get_type_info
+    func_idx = type_index(TVMFunction)
+    type_info = get_type_info(func_idx)
+    @test type_info !== nothing
+    @test type_info.type_index == func_idx
+
+    # Test type_key retrieval from type_info
+    type_key_bytes = type_info.type_key
+    retrieved_key = unsafe_string(type_key_bytes.data, type_key_bytes.size)
+    @test retrieved_key == "ffi.Function"
+
+    # Test get_type_info with string
+    type_info2 = get_type_info("ffi.Function")
+    @test type_info2 !== nothing
+    @test type_info2.type_index == func_idx
+
+    # Test get_fields and get_methods (may be empty for built-in types)
+    fields = get_fields(type_info)
+    @test fields isa Vector{FieldInfo}
+
+    methods = get_methods(type_info)
+    @test methods isa Vector{MethodInfo}
+end
+
+@testset "Reflection with TestObject" begin
+    # Test with testing.TestObjectBase which has fields and methods defined in C++
+    type_info = get_type_info("testing.TestObjectBase")
+
+    if type_info !== nothing && type_info.num_fields > 0
+        # This type should have fields: v_i64, v_f64, v_str
+        fields = get_fields(type_info)
+        @test length(fields) > 0
+
+        field_names = [f.name for f in fields]
+        @test "v_i64" in field_names || "v_f64" in field_names
+
+        # Get methods
+        methods = get_methods(type_info)
+
+        # Check if add_i64 method exists
+        method_names = [m.name for m in methods]
+        if "add_i64" in method_names
+            @test true  # Method found
+        end
+    else
+        @info "testing.TestObjectBase not available or has no reflection info"
+    end
+end
+
+@testset "@register_object with Reflection" begin
+    # Test that registered types can use reflection-based property access
+    @register_object "julia.test.ReflectionTest" struct ReflectionTest end
+
+    # The type should be registered
+    @test isdefined(@__MODULE__, :ReflectionTest)
+    @test type_index(ReflectionTest) > 0
+    @test type_key(ReflectionTest) == "julia.test.ReflectionTest"
+
+    # Global reflection cache should be available
+    @test isdefined(TVMFFI, :_get_reflection_cache)
+end

@@ -245,6 +245,61 @@ struct TVMFFIOpaqueObjectCell
     handle::Ptr{Cvoid}
 end
 
+# Field getter/setter function pointer types
+const TVMFFIFieldGetter = Ptr{Cvoid}  # int (*)(void* field, TVMFFIAny* result)
+const TVMFFIFieldSetter = Ptr{Cvoid}  # int (*)(void* field, const TVMFFIAny* value)
+
+# Field flag bitmasks
+const kTVMFFIFieldFlagBitMaskWritable = Int64(1) << 0
+const kTVMFFIFieldFlagBitMaskHasDefault = Int64(1) << 1
+
+# Method flag bitmasks
+const kTVMFFIMethodFlagBitMaskStatic = Int64(1) << 0
+
+"""
+    TVMFFIFieldInfo
+
+Information about a field in a TVM object for reflection.
+"""
+struct TVMFFIFieldInfo
+    name::TVMFFIByteArray       # Field name
+    doc::TVMFFIByteArray        # Docstring
+    metadata::TVMFFIByteArray   # JSON metadata (including type_schema)
+    flags::Int64                # Bitmask flags
+    size::Int64                 # Field size in bytes
+    alignment::Int64            # Field alignment
+    offset::Int64               # Byte offset from object header
+    getter::TVMFFIFieldGetter   # Getter function pointer
+    setter::TVMFFIFieldSetter   # Setter function pointer
+    default_value::TVMFFIAny    # Default value (if flags has kTVMFFIFieldFlagBitMaskHasDefault)
+    field_static_type_index::Int32  # Static type index of the field
+end
+
+"""
+    TVMFFIMethodInfo
+
+Information about a method in a TVM object for reflection.
+"""
+struct TVMFFIMethodInfo
+    name::TVMFFIByteArray       # Method name
+    doc::TVMFFIByteArray        # Docstring
+    metadata::TVMFFIByteArray   # JSON metadata (including type_schema)
+    flags::Int64                # Bitmask flags (kTVMFFIMethodFlagBitMaskStatic if static)
+    method::TVMFFIAny           # Method as TVMFFIAny (function object handle)
+end
+
+"""
+    TVMFFITypeMetadata
+
+Extra metadata for a TVM object type (optional).
+"""
+struct TVMFFITypeMetadata
+    doc::TVMFFIByteArray        # Type docstring
+    creator::Ptr{Cvoid}         # Object creator function (optional)
+    total_size::Int32           # Total object size (0 if unknown)
+    structural_eq_hash_kind::Int32  # Structural eq/hash kind
+end
+
 """
     TVMFFITypeInfo
 
@@ -255,13 +310,13 @@ struct TVMFFITypeInfo
     type_index::Int32
     type_depth::Int32
     type_key::TVMFFIByteArray
-    type_ancestors::Ptr{Cvoid}  # const struct TVMFFITypeInfo**
+    type_ancestors::Ptr{Ptr{TVMFFITypeInfo}}  # const struct TVMFFITypeInfo**
     type_key_hash::UInt64
     num_fields::Int32
     num_methods::Int32
-    fields::Ptr{Cvoid}  # const TVMFFIFieldInfo*
-    methods::Ptr{Cvoid}  # const TVMFFIMethodInfo*
-    metadata::Ptr{Cvoid}  # const TVMFFITypeMetadata*
+    fields::Ptr{TVMFFIFieldInfo}   # const TVMFFIFieldInfo*
+    methods::Ptr{TVMFFIMethodInfo} # const TVMFFIMethodInfo*
+    metadata::Ptr{TVMFFITypeMetadata}  # const TVMFFITypeMetadata*
 end
 
 # Section: Core C API functions

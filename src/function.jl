@@ -369,3 +369,20 @@ end
 function Base.show(io::IO, func::TVMFunction)
     print(io, "TVMFunction(@", repr(UInt(func.handle)), ")")
 end
+
+#------------------------------------------------------------
+# Section: Reflection Support (depends on MethodInfo from object.jl)
+#------------------------------------------------------------
+
+"""
+    get_method_function(method::MethodInfo) -> TVMFunction
+
+Get the TVMFunction for a MethodInfo. Creates a borrowed reference.
+This function is defined here because it depends on TVMFunction.
+"""
+function get_method_function(method::MethodInfo)
+    if method.method_handle == C_NULL
+        error("Method '$(method.name)' has no function handle")
+    end
+    return TVMFunction(method.method_handle; borrowed=true)
+end
