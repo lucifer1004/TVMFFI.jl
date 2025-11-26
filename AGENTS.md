@@ -394,3 +394,159 @@ When implementing, modify:
 1. `src/function.jl`: Replace `_callback_registry` Dict with pool
 2. `src/object.jl`: Use pool for `@register_object` macro
 3. C callbacks: Pass slot index instead of pointer
+
+---
+
+## Future Design: DLPack Zero-Copy Tensor Exchange
+
+> **Design Date**: 2025-11-26
+> **Status**: PLANNED
+> **Reference**: [DLPack.jl](https://github.com/p-zubieta/DLPack.jl)
+
+### Problem Statement
+
+Current `TensorView` uses `kTVMFFIDLTensorPtr` (type_index=7) which is just a raw pointer:
+- **No ownership information** - TVM doesn't know when Julia will free the data
+- **Must copy on receive** - Julia doesn't know when TVM will free the data
+- **GC.@preserve required** - Manual lifetime management is error-prone
+
+### Solution: Use `kTVMFFITensor` with DLPack Protocol
+
+Replace raw `DLTensorPtr` with managed `TVMTensor` objects (type_index=70) that have:
+- Reference counting for safe lifecycle management
+- DLPack protocol for zero-copy data exchange
+
+### Implementation Plan
+
+#### Phase 1: Add DLPack.jl Dependency
+
+```toml
+# TVMFFI/Project.toml
+[deps]
+DLPack = "d1985e75-91ee-4ca6-9615-d8afb9e46da7"
+```
+
+#### Phase 2: Bind C API Functions
+
+```julia
+# LibTVMFFI.jl additions:
+
+# Julia Array → TVMTensor (via DLPack)
+function TVMFFITensorFromDLPackVersioned(
+    from::Ptr{DLManagedTensorVersioned},
+    require_alignment::Int32,
+    require_contiguous::Int32
+)
+    out = Ref{TVMFFIObjectHandle}(C_NULL)
+    ret = ccall(
+        (:TVMFFITensorFromDLPackVersioned, libtvm_ffi),
+        Cint,
+        (Ptr{Cvoid}, Int32, Int32, Ptr{TVMFFIObjectHandle}),
+        from, require_alignment, require_contiguous, out
+    )
+    return ret, out[]
+end
+
+# TVMTensor → Julia Array (via DLPack)
+function TVMFFITensorToDLPackVersioned(from::TVMFFIObjectHandle)
+    out = Ref{Ptr{Cvoid}}(C_NULL)
+    ret = ccall(
+        (:TVMFFITensorToDLPackVersioned, libtvm_ffi),
+        Cint,
+        (TVMFFIObjectHandle, Ptr{Ptr{Cvoid}}),
+        from, out
+    )
+    return ret, out[]
+end
+```
+
+#### Phase 3: Implement Conversions
+
+```julia
+# conversion.jl or new dlpack.jl:
+
+using DLPack
+
+"""
+    array_to_tvm_tensor(arr::AbstractArray) -> TVMTensor
+
+Convert Julia array to TVMTensor via DLPack protocol (zero-copy).
+The returned TVMTensor holds a reference to the Julia array.
+"""
+function array_to_tvm_tensor(arr::AbstractArray)::TVMTensor
+    # Use DLPack.jl to create DLManagedTensorVersioned
+    # Then call TVMFFITensorFromDLPackVersioned
+    # Return managed TVMTensor
+end
+
+"""
+    tvm_tensor_to_array(tensor::TVMTensor) -> AbstractArray
+
+Convert TVMTensor to Julia array via DLPack protocol (zero-copy).
+The returned array is a view into the TVMTensor's data.
+"""
+function tvm_tensor_to_array(tensor::TVMTensor)
+    # Call TVMFFITensorToDLPackVersioned
+    # Use DLPack.jl to wrap as Julia array
+end
+```
+
+#### Phase 4: Update Function Call Path
+
+```julia
+# function.jl changes:
+
+function (func::TVMFunction)(args...)
+    for (i, arg) in enumerate(args)
+        if arg isa AbstractArray && !(arg isa TensorView)
+            # NEW: Convert to TVMTensor (kTVMFFITensor) instead of TensorView
+            tensor = array_to_tvm_tensor(arg)
+            args_any[i] = TVMAny(tensor)
+            # TVMTensor manages lifecycle via refcount
+        elseif arg isa TensorView
+            # Keep for performance-critical code
+            args_any[i] = TVMAny(arg)
+        end
+    end
+end
+```
+
+### Type Mapping After Implementation
+
+| Scenario | Current | After DLPack |
+|----------|---------|--------------|
+| Julia → TVM (args) | `TensorView` → `kTVMFFIDLTensorPtr` | `array_to_tvm_tensor` → `kTVMFFITensor` |
+| TVM → Julia (return) | `kTVMFFIDLTensorPtr` → **COPY** | `kTVMFFITensor` → `tvm_tensor_to_array` (zero-copy) |
+| Julia → TVM (callback return) | `TensorView` → `kTVMFFIDLTensorPtr` | `kTVMFFITensor` (zero-copy) |
+| TVM → Julia (callback arg) | `kTVMFFIDLTensorPtr` → **COPY** | `kTVMFFITensor` → `TVMTensor` (zero-copy) |
+
+### API After Implementation
+
+```julia
+# Recommended usage (zero-copy, safe)
+arr = rand(Float32, 3, 4)
+result = tvm_func(arr)  # Auto-converts to TVMTensor
+julia_arr = tvm_tensor_to_array(result)  # Zero-copy view
+
+# High-performance usage (zero-copy, manual lifetime)
+view = TensorView(arr)
+GC.@preserve arr begin
+    tvm_func(view)  # Direct DLTensorPtr, no refcount overhead
+end
+```
+
+### Benefits
+
+1. **Zero-copy** - No data copying in either direction
+2. **Safe** - Reference counting manages lifecycle
+3. **Compatible** - Works with DLPack.jl ecosystem (PyTorch, JAX, CuPy via PyCall)
+4. **Backward compatible** - `TensorView` still available for performance
+
+### When to Implement
+
+**Implement when**:
+1. Users report performance issues due to tensor copying
+2. Need interop with Python ML frameworks via DLPack
+3. Large tensor sizes make copying prohibitive
+
+**Current workaround**: Use `TVMTensor` directly for TVM-managed data, accept copy overhead for callback arguments.
