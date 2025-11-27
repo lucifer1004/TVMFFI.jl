@@ -89,3 +89,113 @@ end
     @test type_index(TVMTensor) == Int32(LibTVMFFI.kTVMFFITensor)
     @test type_key(TVMTensor) == "ffi.Tensor"
 end
+
+@testset "GPU Support API" begin
+    # Test dldevice for CPU arrays (default)
+    cpu_arr = Float32[1, 2, 3]
+    dev = dldevice(cpu_arr)
+    @test dev.device_type == Int32(LibTVMFFI.kDLCPU)
+    @test dev.device_id == 0
+
+    # Test with 2D array
+    cpu_arr2d = rand(Float32, 3, 4)
+    dev2 = dldevice(cpu_arr2d)
+    @test dev2.device_type == Int32(LibTVMFFI.kDLCPU)
+
+    # Test supports_gpu_backend (all should return false without GPU packages)
+    @test supports_gpu_backend(:CUDA) isa Bool
+    @test supports_gpu_backend(:ROCm) isa Bool
+    @test supports_gpu_backend(:Metal) isa Bool
+    @test supports_gpu_backend(:oneAPI) isa Bool
+
+    # Test with alternative name
+    @test supports_gpu_backend(:AMDGPU) isa Bool
+
+    # Test unknown backend
+    @test supports_gpu_backend(:UnknownBackend) == false
+
+    # Test list_available_gpu_backends
+    backends = list_available_gpu_backends()
+    @test backends isa Vector{Symbol}
+    # Without GPU packages loaded, should be empty
+    # (unless running on a system with GPU packages)
+end
+
+@testset "GPU Info Functions" begin
+    # Test print_gpu_info (just verify it runs without error)
+    # Note: print_gpu_info() doesn't accept IO parameter, so can't use sprint
+    @test_nowarn print_gpu_info()
+
+    # Test gpu_array_info with CPU array (diagnostic function, just verify no errors)
+    cpu_arr = Float32[1, 2, 3]
+    @test_nowarn gpu_array_info(cpu_arr)
+end
+
+@testset "TensorView - Advanced" begin
+    # Test size, ndims, length for TensorView
+    arr = rand(Float32, 3, 4, 5)
+    view = TensorView(arr)
+
+    @test size(view) == (3, 4, 5)
+    @test ndims(view) == 3
+    @test length(view) == 60
+
+    # Test device and dtype
+    @test device(view).device_type == Int32(LibTVMFFI.kDLCPU)
+    @test dtype(view).bits == 32
+
+    # Test contiguity checks
+    @test TVMFFI.is_contiguous(view) == true
+    @test TVMFFI.is_f_contiguous(view) == true  # Julia arrays are column-major
+    @test TVMFFI.is_c_contiguous(view) == false  # Not row-major
+
+    # Test ownership
+    @test TVMFFI.is_julia_owned(view) == true
+    @test TVMFFI.is_tvm_owned(view) == false
+end
+
+@testset "TensorView - Strided Arrays" begin
+    # Test non-contiguous array (row slice)
+    matrix = rand(Float32, 4, 5)
+    row = @view matrix[2, :]  # Non-contiguous in column-major
+
+    row_view = TensorView(row)
+    @test size(row_view) == (5,)
+    @test row_view.strides == [4]  # Stride of 4 between elements
+
+    # Test column slice (contiguous)
+    col = @view matrix[:, 3]
+    col_view = TensorView(col)
+    @test size(col_view) == (4,)
+    @test col_view.strides == [1]  # Contiguous
+
+    # Test 2D subarray
+    sub = @view matrix[2:3, 2:4]
+    sub_view = TensorView(sub)
+    @test size(sub_view) == (2, 3)
+end
+
+@testset "TensorView - Various dtypes" begin
+    # Test different element types
+    for T in [Float16, Float32, Float64, Int8, Int16, Int32, Int64, UInt8, UInt16, UInt32, UInt64]
+        arr = T[1, 2, 3]
+        view = TensorView(arr)
+        @test eltype(view) == T
+        @test TVMFFI.source_type(view) == typeof(arr)
+    end
+end
+
+@testset "Stride Computation" begin
+    # Test C-contiguous strides (row-major)
+    @test TVMFFI._compute_c_contiguous_strides([3, 4, 5]) == [20, 5, 1]
+    @test TVMFFI._compute_c_contiguous_strides([10]) == [1]
+    @test TVMFFI._compute_c_contiguous_strides(Int64[]) == Int64[]
+
+    # Test F-contiguous strides (column-major, Julia-style)
+    @test TVMFFI._compute_f_contiguous_strides([3, 4, 5]) == [1, 3, 12]
+    @test TVMFFI._compute_f_contiguous_strides([10]) == [1]
+    @test TVMFFI._compute_f_contiguous_strides(Int64[]) == Int64[]
+
+    # Alias should work
+    @test TVMFFI._compute_contiguous_strides([3, 4]) == TVMFFI._compute_c_contiguous_strides([3, 4])
+end

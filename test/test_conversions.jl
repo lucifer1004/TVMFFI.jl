@@ -252,3 +252,92 @@ end
     @test occursin("TVMAny", repr(any))
     @test occursin("type_index=3", repr(any))
 end
+
+@testset "TVMAny - Integer Types" begin
+    # Test various integer types conversion to TVMAny
+    @test take_value(TVMAny(Int32(42))) == 42
+    @test take_value(TVMAny(Int16(42))) == 42
+    @test take_value(TVMAny(Int8(42))) == 42
+
+    # Unsigned types
+    @test take_value(TVMAny(UInt64(100))) == reinterpret(Int64, UInt64(100))
+    @test take_value(TVMAny(UInt32(100))) == 100
+    @test take_value(TVMAny(UInt16(100))) == 100
+    @test take_value(TVMAny(UInt8(100))) == 100
+end
+
+@testset "TVMAny - Float Types" begin
+    # Test Float32 and Float16 promotion to Float64
+    f32 = Float32(3.14)
+    any_f32 = TVMAny(f32)
+    result = take_value(any_f32)
+    @test result isa Float64
+    @test isapprox(result, 3.14, atol=1e-5)
+
+    f16 = Float16(2.0)
+    any_f16 = TVMAny(f16)
+    result16 = take_value(any_f16)
+    @test result16 isa Float64
+    @test result16 ≈ 2.0
+end
+
+@testset "TVMAny - AbstractArray" begin
+    # Test TVMAny(AbstractArray) returns tuple
+    arr = Float32[1, 2, 3]
+    result = TVMAny(arr)
+    @test result isa Tuple
+    any, view = result
+    @test any isa TVMAny
+    @test view isa TensorView
+    @test TVMFFI.type_index(any) == Int32(LibTVMFFI.kTVMFFIDLTensorPtr)
+end
+
+@testset "TVMAny - TVMObject" begin
+    # Test TVMAny with generic TVMObject
+    mod = system_lib()
+    obj = mod.handle  # Get the underlying TVMObject
+    @test obj isa TVMFFI.TVMObject
+
+    # Create TVMAny from TVMObject
+    any = TVMAny(obj)
+    @test TVMFFI.is_object(any) == true
+
+    # Test take_value - returns TVMModule because type_index is kTVMFFIModule
+    # This is correct behavior: _extract_value dispatches based on type_index
+    recovered = take_value(any)
+    @test recovered isa TVMModule  # Module-specific type returned
+end
+
+@testset "TVMAny - Ref{DLTensor}" begin
+    # Test TVMAny from DLTensor reference
+    arr = Float32[1, 2, 3]
+    view = TensorView(arr)
+    ref = Ref(view.dltensor)
+
+    any = TVMAny(ref)
+    @test TVMFFI.type_index(any) == Int32(LibTVMFFI.kTVMFFIDLTensorPtr)
+end
+
+@testset "Conversion Helpers" begin
+    # Test _compute_c_strides
+    @test TVMFFI._compute_c_strides([3, 4, 5]) == [20, 5, 1]
+    @test TVMFFI._compute_c_strides([10]) == [1]
+    @test TVMFFI._compute_c_strides([]) == Int64[]
+
+    # Test _copy_strided! with contiguous data
+    src = Float32[1, 2, 3, 4, 5, 6]
+    dst = zeros(Float32, 6)
+    GC.@preserve src begin
+        TVMFFI._copy_strided!(dst, pointer(src), [6], [1])
+    end
+    @test dst == src
+
+    # Test _copy_strided! with 2D strided access
+    src2d = Float32[1 2 3; 4 5 6]  # 2x3 column-major
+    dst2d = zeros(Float32, 2, 3)
+    GC.@preserve src2d begin
+        # Column-major strides: [1, 2]
+        TVMFFI._copy_strided!(dst2d, pointer(src2d), [2, 3], [1, 2])
+    end
+    @test dst2d == src2d
+end
