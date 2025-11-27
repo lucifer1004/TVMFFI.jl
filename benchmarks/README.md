@@ -108,14 +108,31 @@ Based on benchmarks run on the same machine (NVIDIA RTX 5000 Ada):
 
 On a typical modern CPU/GPU (2020+):
 
+### Direct FFI Calls (bench_example.jl)
+
 ```
-Julia empty function:        ~2-5 ns
-TVM func() (no args):        ~11 ns   (6x faster than Python)
-TVM func(Int64):             ~20 ns  
-TVM func(Array) autodlpack:  ~30 ns   (10x faster than Python)
+TVM func() (no args):         ~11 ns   (6x faster than Python)
+TVM func(Int64):              ~20 ns  
+TVM func(Array) autodlpack:   ~30 ns   (10x faster than Python)
 TVM func(CuArray) autodlpack: ~200 ns  (4.5x faster than Python)
-TVM func(3 CuArrays):        ~580 ns  (1.6x faster than Python)
+TVM func(3 CuArrays):         ~580 ns  (1.6x faster than Python)
 ```
+
+### With Julia Callbacks (ffi_overhead.jl)
+
+These numbers include callback dispatch overhead:
+
+```
+TVM func() [no args]:                    ~161 ns  (4 allocs, 128 B)
+TVM func(Int64) → Int64:                 ~210 ns  (6 allocs, 208 B)
+TVM func(Float64) → Float64:             ~192 ns  (8 allocs, 240 B)
+TVM func(Int64, Int64) → Int64:          ~219 ns  (6 allocs, 240 B)
+TVM func(Float32[64]) → Array:           ~303 ns  (10 allocs, 352 B)
+TVM func(TensorView[64]) → Array:        ~287 ns  (9 allocs, 256 B)
+TVM func(Float32[64] .+= 1) → Array:     ~294 ns  (10 allocs, 352 B)
+```
+
+**Note**: Array operations are O(1) - overhead is constant regardless of array size.
 
 **Julia TVMFFI is 2-10x faster than Python for both CPU and GPU operations!**
 
