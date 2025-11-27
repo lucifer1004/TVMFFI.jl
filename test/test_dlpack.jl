@@ -167,11 +167,13 @@ end
 @testset "Device Type Names" begin
     # Test _device_type_to_name helper (GPU types only, CPU uses different path)
     @test TVMFFI._device_type_to_name(Int32(LibTVMFFI.kDLCUDA)) == "CUDA"
-    @test TVMFFI._device_type_to_name(Int32(LibTVMFFI.kDLROCM)) == "ROCm"
+    @test TVMFFI._device_type_to_name(Int32(LibTVMFFI.kDLROCM)) == "ROCm"  # Note: ROCM not ROCm
     @test TVMFFI._device_type_to_name(Int32(LibTVMFFI.kDLMetal)) == "Metal"
     @test TVMFFI._device_type_to_name(Int32(LibTVMFFI.kDLVulkan)) == "Vulkan"
     @test TVMFFI._device_type_to_name(Int32(LibTVMFFI.kDLOpenCL)) == "OpenCL"
     @test TVMFFI._device_type_to_name(Int32(LibTVMFFI.kDLOneAPI)) == "oneAPI"
+    @test TVMFFI._device_type_to_name(Int32(LibTVMFFI.kDLCUDAHost)) == "CUDA Host"
+    @test TVMFFI._device_type_to_name(Int32(LibTVMFFI.kDLCUDAManaged)) == "CUDA Managed"
 
     # CPU is not in the GPU-focused mapping, returns Unknown
     cpu_name = TVMFFI._device_type_to_name(Int32(LibTVMFFI.kDLCPU))

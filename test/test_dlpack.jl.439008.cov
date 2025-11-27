@@ -1,0 +1,203 @@
+        - # Tests for DLPack zero-copy tensor exchange
+        - 
+        1 @testset "DLPack Zero-Copy" begin
+        1     @testset "TVMTensor(arr) - Basic" begin
+        -         # Test basic conversion
+        6         arr = Float32[1, 2, 3, 4, 5]
+        1         tensor = TVMTensor(arr)
+        - 
+        1         @test tensor isa TVMTensor
+        1         @test size(tensor) == (5,)
+        1         @test dtype(tensor).bits == 32
+        1         @test device(tensor).device_type == Int32(LibTVMFFI.kDLCPU)
+        -     end
+        - 
+        -     @testset "TVMTensor(arr) - Multi-dimensional" begin
+        -         # Test 2D array
+        2         arr = rand(Float32, 3, 4)
+        1         tensor = TVMTensor(arr)
+        - 
+        1         @test tensor isa TVMTensor
+        -         # Note: DLPack reverses dimensions (row-major vs col-major)
+        -         # TVM sees (4, 3) instead of (3, 4)
+        1         @test ndims(tensor) == 2
+        -     end
+        - 
+        -     @testset "TVMTensor(arr) - Various dtypes" begin
+        -         # Test different data types
+        2         for T in [Float32, Float64, Int32, Int64]
+        4             arr = T[1, 2, 3]
+        4             tensor = TVMTensor(arr)
+        4             @test tensor isa TVMTensor
+        4         end
+        -     end
+        - 
+        -     @testset "from_dlpack - Basic" begin
+        -         # Create a TVM tensor and convert back
+        2         arr = Float32[1, 2, 3, 4, 5]
+        1         tensor = TVMTensor(arr)
+        - 
+        -         # Convert back to Julia array
+        1         arr2 = from_dlpack(tensor)
+        - 
+        1         @test arr2 isa AbstractArray
+        1         @test length(arr2) == length(arr)
+        -     end
+        - 
+        -     @testset "Zero-copy verification" begin
+        -         # Verify that modifications through one view affect the other
+        2         arr = Float32[1, 2, 3, 4, 5]
+        1         tensor = TVMTensor(arr)
+        - 
+        -         # Modify original array
+        1         arr[1] = 99.0f0
+        - 
+        -         # Check if tensor sees the change
+        -         # This requires getting the data from the tensor
+        1         arr2 = from_dlpack(tensor)
+        - 
+        -         # Note: Due to dimension reversal, we check by value
+        1         @test 99.0f0 in arr2
+        -     end
+        - 
+        -     @testset "TVMAny with TVMTensor" begin
+        -         # Test TVMAny creation using TVMTensor (DLPack-based)
+        2         arr = Float32[1, 2, 3]
+        1         tensor = TVMTensor(arr)
+        1         any = TVMFFI.TVMAny(tensor)
+        - 
+        1         @test TVMFFI.type_index(any) == Int32(LibTVMFFI.kTVMFFITensor)
+        -     end
+        - end
+        - 
+        1 @testset "TVMTensor Methods" begin
+        1     @testset "shape and size" begin
+        2         arr = rand(Float32, 3, 4, 5)
+        1         tensor = TVMTensor(arr)
+        - 
+        1         @test shape(tensor) isa Vector{Int64}
+        1         @test length(shape(tensor)) == 3
+        1         @test size(tensor) isa Tuple
+        1         @test ndims(tensor) == 3
+        1         @test length(tensor) == 60
+        - 
+        -         # size(tensor, dim)
+        1         @test size(tensor, 1) > 0
+        1         @test size(tensor, 2) > 0
+        1         @test size(tensor, 3) > 0
+        1         @test size(tensor, 4) == 1  # Out of bounds returns 1
+        -     end
+        - 
+        -     @testset "dtype and device" begin
+        2         for T in [Float32, Float64, Int32, Int64]
+        4             arr = T[1, 2, 3]
+        4             tensor = TVMTensor(arr)
+        4             @test dtype(tensor) isa DLDataType
+        4             @test device(tensor) isa DLDevice
+        4             @test device(tensor).device_type == Int32(LibTVMFFI.kDLCPU)
+        4         end
+        -     end
+        - 
+        -     @testset "strides and contiguity" begin
+        2         arr = rand(Float32, 3, 4)
+        1         tensor = TVMTensor(arr)
+        - 
+        1         str = TVMFFI.strides(tensor)
+        1         @test str isa Vector{Int64}
+        1         @test length(str) == 2
+        - 
+        -         # Julia arrays are F-contiguous (column-major), TVMTensor.is_contiguous
+        -         # checks C-contiguous (row-major), so a Julia array won't be C-contiguous
+        -         # This is expected behavior - the tensor preserves Julia's memory layout
+        1         @test str == [1, 3]  # F-contiguous strides for 3x4 array
+        -     end
+        - 
+        -     @testset "data_ptr" begin
+        2         arr = Float32[1, 2, 3]
+        1         tensor = TVMTensor(arr)
+        - 
+        1         ptr = TVMFFI.data_ptr(tensor)
+        1         @test ptr isa Ptr{Cvoid}
+        1         @test ptr != C_NULL
+        -     end
+        - 
+        -     @testset "show and summary" begin
+        2         arr = Float32[1, 2, 3]
+        1         tensor = TVMTensor(arr)
+        - 
+        -         # Test show
+        1         str = sprint(show, tensor)
+        1         @test occursin("TVMTensor", str)
+        1         @test occursin("float32", str)
+        - 
+        -         # Test summary
+        1         summary_str = sprint(Base.summary, tensor)
+        1         @test occursin("TVMTensor", summary_str)
+        -     end
+        - end
+        - 
+        - @testset "TensorView from TVMTensor" begin
+        -     arr = rand(Float32, 3, 4)
+        -     tensor = TVMTensor(arr)
+        - 
+        -     # Create TensorView from TVMTensor
+        -     view = TensorView(tensor)
+        - 
+        -     @test view isa TensorView
+        -     @test TVMFFI.is_tvm_owned(view) == true
+        -     @test TVMFFI.is_julia_owned(view) == false
+        -     @test view.source === tensor
+        - end
+        - 
+        - @testset "DLManagedTensor" begin
+        -     # Test to_dlmanaged_tensor
+        -     arr = Float32[1, 2, 3]
+        -     view = TensorView(arr)
+        - 
+        -     dlm_ptr = TVMFFI.to_dlmanaged_tensor(view)
+        -     @test dlm_ptr isa Ptr{TVMFFI.DLManagedTensor}
+        -     @test dlm_ptr != C_NULL
+        - 
+        -     # Load and verify
+        -     dlm = unsafe_load(dlm_ptr)
+        -     @test dlm.dl_tensor.ndim == 1
+        -     @test dlm.deleter != C_NULL  # Has deleter function
+        - end
+        - 
+        - @testset "Device Type Names" begin
+        -     # Test _device_type_to_name helper (GPU types only, CPU uses different path)
+        -     @test TVMFFI._device_type_to_name(Int32(LibTVMFFI.kDLCUDA)) == "CUDA"
+        -     @test TVMFFI._device_type_to_name(Int32(LibTVMFFI.kDLROCm)) == "ROCm"
+        -     @test TVMFFI._device_type_to_name(Int32(LibTVMFFI.kDLMetal)) == "Metal"
+        -     @test TVMFFI._device_type_to_name(Int32(LibTVMFFI.kDLVulkan)) == "Vulkan"
+        -     @test TVMFFI._device_type_to_name(Int32(LibTVMFFI.kDLOpenCL)) == "OpenCL"
+        -     @test TVMFFI._device_type_to_name(Int32(LibTVMFFI.kDLOneAPI)) == "oneAPI"
+        -     @test TVMFFI._device_type_to_name(Int32(LibTVMFFI.kDLCUDAHost)) == "CUDA Host"
+        -     @test TVMFFI._device_type_to_name(Int32(LibTVMFFI.kDLCUDAManaged)) == "CUDA Managed"
+        - 
+        -     # CPU is not in the GPU-focused mapping, returns Unknown
+        -     cpu_name = TVMFFI._device_type_to_name(Int32(LibTVMFFI.kDLCPU))
+        -     @test occursin("Unknown", cpu_name)
+        - 
+        -     # Unknown type
+        -     unknown = TVMFFI._device_type_to_name(Int32(9999))
+        -     @test occursin("Unknown", unknown)
+        - end
+        - 
+        - @testset "Strided Copy - Multi-dimensional" begin
+        -     # Test _copy_strided! with 3D arrays (uses recursive path)
+        -     src = rand(Float32, 2, 3, 4)
+        -     
+        -     # Create destination with same shape
+        -     dst = similar(src)
+        -     fill!(dst, 0.0f0)
+        -     
+        -     # Compute strides for src
+        -     shape = Int64[size(src)...]
+        -     strides = Int64[1, 2, 6]  # F-contiguous strides for 2x3x4 array
+        -     
+        -     # Call the internal copy function
+        -     TVMFFI._copy_strided!(dst, pointer(src), shape, strides)
+        -     
+        -     @test dst ≈ src
+        - end

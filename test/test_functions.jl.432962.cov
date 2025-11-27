@@ -1,0 +1,126 @@
+        - # Tests for Function Registration and Calling
+        - 
+        - @testset "Global Function Lookup" begin
+        -     # Test non-existent function
+        -     func = get_global_func("this_function_definitely_does_not_exist_xyz123")
+        -     # Should return nothing for non-existent functions
+        -     @test func === nothing
+        - end
+        - 
+        - @testset "TVMFunction Type System" begin
+        -     # Test type_index and type_key for TVMFunction
+        -     @test type_index(TVMFunction) == Int32(LibTVMFFI.kTVMFFIFunction)
+        -     @test type_key(TVMFunction) == "ffi.Function"
+        - 
+        -     # Test instance type_index
+        -     echo_func = get_global_func("testing.echo")
+        -     if echo_func !== nothing
+        -         @test type_index(echo_func) == Int32(LibTVMFFI.kTVMFFIFunction)
+        -     end
+        - end
+        - 
+        - @testset "Function Registration" begin
+        -     # Test basic function registration
+        1     function test_add(x::Int64, y::Int64)
+        1         return x + y
+        -     end
+        - 
+        -     register_global_func("julia.test.add", test_add)
+        -     func = get_global_func("julia.test.add")
+        -     @test func !== nothing
+        -     @test func(Int64(10), Int64(20)) == 30
+        - 
+        -     # Test function with multiple types
+        1     function test_multiply(x::Int64, y::Float64)
+        1         return Float64(x) * y
+        -     end
+        - 
+        -     register_global_func("julia.test.multiply", test_multiply)
+        -     func2 = get_global_func("julia.test.multiply")
+        -     result = func2(Int64(5), 3.0)
+        -     @test result ≈ 15.0
+        - 
+        -     # Test function with boolean
+        2     function test_negate(b::Bool)
+        2         return !b
+        -     end
+        - 
+        -     register_global_func("julia.test.negate", test_negate)
+        -     func3 = get_global_func("julia.test.negate")
+        -     @test func3(true) == false
+        -     @test func3(false) == true
+        - 
+        -     # Test function returning nothing
+        1     function test_void()
+        1         return nothing
+        -     end
+        - 
+        -     register_global_func("julia.test.void", test_void)
+        -     func4 = get_global_func("julia.test.void")
+        -     @test func4() === nothing
+        - 
+        -     # Test varargs function
+        1     function test_sum(args...)
+        1         return sum(args)
+        -     end
+        - 
+        -     register_global_func("julia.test.sum", test_sum; override = true)
+        -     func5 = get_global_func("julia.test.sum")
+        -     @test func5(Int64(1), Int64(2), Int64(3), Int64(4)) == 10
+        - 
+        -     # Test exception handling
+        1     function test_error()
+        1         error("Test error!")
+        -     end
+        - 
+        -     register_global_func("julia.test.error", test_error; override = true)
+        -     func6 = get_global_func("julia.test.error")
+        -     @test_throws TVMError func6()
+        - end
+        - 
+        - @testset "DLTensor Stride Handling in Callbacks" begin
+        -     # Test array callback with different stride patterns
+        - 
+        -     # Helper to register and test a callback
+        5     function test_array_callback(arr, expected_result)
+        5         callback_called = Ref(false)
+        5         result_ref = Ref{Any}(nothing)
+        - 
+       10         function array_processor(x::AbstractArray)
+        5             callback_called[] = true
+       10             result_ref[] = copy(x)
+        5             return x
+        -         end
+        - 
+        5         register_global_func("julia.test.array_proc", array_processor; override = true)
+        5         func = get_global_func("julia.test.array_proc")
+        - 
+        5         returned = func(arr)
+        - 
+       10         @test callback_called[]
+        5         @test result_ref[] ≈ expected_result
+        5         @test returned ≈ expected_result
+        -     end
+        - 
+        -     # Test 1: Contiguous array (NULL strides equivalent)
+        -     contiguous_arr = Float32[1, 2, 3, 4, 5]
+        -     test_array_callback(contiguous_arr, contiguous_arr)
+        - 
+        -     # Test 2: Contiguous slice
+        -     vec = Float32[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        -     contiguous_slice = @view vec[3:7]
+        -     test_array_callback(contiguous_slice, collect(contiguous_slice))
+        - 
+        -     # Test 3: Column slice (contiguous in column-major)
+        -     matrix = Float32[1 2 3; 4 5 6; 7 8 9]
+        -     col_slice = @view matrix[:, 2]
+        -     test_array_callback(col_slice, collect(col_slice))
+        - 
+        -     # Test 4: Row slice (non-contiguous in column-major) 
+        -     row_slice = @view matrix[2, :]
+        -     test_array_callback(row_slice, collect(row_slice))
+        - 
+        -     # Test 5: 2D array
+        -     matrix_2d = Float64[1.0 2.0; 3.0 4.0]
+        -     test_array_callback(matrix_2d, matrix_2d)
+        - end
