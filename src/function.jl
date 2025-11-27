@@ -375,59 +375,11 @@ function (func::TVMFunction)()
     return take_value(result_owned)
 end
 
-# Specialized method for single argument (any type)
-# Uses Ref instead of Vector to avoid allocation
-function (func::TVMFunction)(arg)
-    raw, gc, tp = _convert_arg(arg)
-    args_raw_ref = Ref(raw)
-    
-    result = Ref{LibTVMFFI.TVMFFIAny}(LibTVMFFI.TVMFFIAny(Int32(LibTVMFFI.kTVMFFINone), 0, 0))
-    
-    local ret
-    GC.@preserve arg gc args_raw_ref begin
-        ret = LibTVMFFI.TVMFFIFunctionCall(
-            func.handle,
-            Base.unsafe_convert(Ptr{LibTVMFFI.TVMFFIAny}, args_raw_ref),
-            Int32(1),
-            Base.unsafe_convert(Ptr{LibTVMFFI.TVMFFIAny}, result)
-        )
-    end
-    check_call(ret)
-    
-    result_raw = result[]
-    
-    # Identity check for arrays
-    if tp !== nothing
-        if result_raw.type_index == Int32(LibTVMFFI.kTVMFFIDLTensorPtr)
-            tensor_ptr = reinterpret(Ptr{DLTensor}, result_raw.data)
-            if tensor_ptr != C_NULL
-                dltensor = unsafe_load(tensor_ptr)
-                data_ptr = Ptr{Cvoid}(dltensor.data)
-                tp[1] == data_ptr && return tp[2]
-            end
-        elseif result_raw.type_index == Int32(LibTVMFFI.kTVMFFITensor)
-            handle = reinterpret(LibTVMFFI.TVMFFIObjectHandle, result_raw.data)
-            if handle != C_NULL
-                dltensor_ptr = get_dltensor_ptr(handle)
-                dltensor = unsafe_load(dltensor_ptr)
-                data_ptr = Ptr{Cvoid}(dltensor.data)
-                if tp[1] == data_ptr
-                    LibTVMFFI.TVMFFIObjectDecRef(handle)
-                    return tp[2]
-                end
-            end
-        end
-    end
-    
-    result_owned = TVMAny(result_raw)
-    return take_value(result_owned)
-end
-
 # ============================================================================
-# Small-N Specializations (2-4 arguments) - Stack allocation via MVector
+# Small-N Specializations (1-10 arguments) - Stack allocation
 # ============================================================================
 # Like Rust's const STACK_LEN = 4, we specialize for small argument counts
-# to avoid Vector{Any} allocations.
+# to avoid Vector{Any} allocations. Generated via macro.
 
 """
 Internal helper: convert a single argument to TVMFFIAny and track array info.
@@ -456,189 +408,123 @@ Returns (raw_any, gc_ref, tensor_ptr_or_nothing)
     end
 end
 
-# Specialized method for 2 arguments - uses stack allocation
-function (func::TVMFunction)(arg1, arg2)
-    # Convert arguments
-    raw1, gc1, tp1 = _convert_arg(arg1)
-    raw2, gc2, tp2 = _convert_arg(arg2)
+"""
+    @_define_narg_method(N)
+
+Internal macro to generate a specialized N-argument method for TVMFunction.
+Uses quote blocks for cleaner metaprogramming.
+"""
+macro _define_narg_method(N)
+    N = N::Int
     
-    # Use MVector for stack allocation (requires StaticArrays, fallback to tuple + Ref)
-    args_raw = Ref((raw1, raw2))
+    # Generate symbol names
+    arg_syms = [Symbol("arg$i") for i in 1:N]
+    raw_syms = [Symbol("raw$i") for i in 1:N]
+    gc_syms = [Symbol("gc$i") for i in 1:N]
+    tp_syms = [Symbol("tp$i") for i in 1:N]
     
-    result = Ref{LibTVMFFI.TVMFFIAny}(LibTVMFFI.TVMFFIAny(Int32(LibTVMFFI.kTVMFFINone), 0, 0))
+    # Build conversion statements: (raw_i, gc_i, tp_i) = _convert_arg(arg_i)
+    convert_stmts = [
+        :(($(raw_syms[i]), $(gc_syms[i]), $(tp_syms[i])) = _convert_arg($(arg_syms[i])))
+        for i in 1:N
+    ]
     
-    local ret
-    GC.@preserve arg1 arg2 gc1 gc2 args_raw begin
-        # Get pointer to first element of tuple in Ref
-        ret = LibTVMFFI.TVMFFIFunctionCall(
-            func.handle,
-            Ptr{LibTVMFFI.TVMFFIAny}(pointer_from_objref(args_raw)),
-            Int32(2),
-            Base.unsafe_convert(Ptr{LibTVMFFI.TVMFFIAny}, result)
-        )
+    # Build raw tuple expression: (raw1, raw2, ...)
+    raw_tuple_expr = Expr(:tuple, raw_syms...)
+    
+    # Build tp check: tp1 !== nothing || tp2 !== nothing || ...
+    tp_check = if N == 1
+        :($(tp_syms[1]) !== nothing)
+    else
+        foldl((a, tp) -> :($a || $tp !== nothing), tp_syms[2:end]; 
+              init = :($(tp_syms[1]) !== nothing))
     end
-    check_call(ret)
     
-    result_raw = result[]
+    # Build DLTensorPtr identity checks (short-circuit return)
+    dltensor_checks = [
+        :($(tp_syms[i]) !== nothing && $(tp_syms[i])[1] == data_ptr && return $(tp_syms[i])[2])
+        for i in 1:N
+    ]
     
-    # Identity check - inline to avoid filter allocation
-    if tp1 !== nothing || tp2 !== nothing
-        if result_raw.type_index == Int32(LibTVMFFI.kTVMFFIDLTensorPtr)
-            tensor_ptr = reinterpret(Ptr{DLTensor}, result_raw.data)
-            if tensor_ptr != C_NULL
-                dltensor = unsafe_load(tensor_ptr)
-                data_ptr = Ptr{Cvoid}(dltensor.data)
-                tp1 !== nothing && tp1[1] == data_ptr && return tp1[2]
-                tp2 !== nothing && tp2[1] == data_ptr && return tp2[2]
+    # Build TVMTensor identity checks (with DecRef before return)
+    tensor_checks = [
+        quote
+            if $(tp_syms[i]) !== nothing && $(tp_syms[i])[1] == data_ptr
+                LibTVMFFI.TVMFFIObjectDecRef(handle)
+                return $(tp_syms[i])[2]
             end
-        elseif result_raw.type_index == Int32(LibTVMFFI.kTVMFFITensor)
-            handle = reinterpret(LibTVMFFI.TVMFFIObjectHandle, result_raw.data)
-            if handle != C_NULL
-                dltensor_ptr = get_dltensor_ptr(handle)
-                dltensor = unsafe_load(dltensor_ptr)
-                data_ptr = Ptr{Cvoid}(dltensor.data)
-                if tp1 !== nothing && tp1[1] == data_ptr
-                    LibTVMFFI.TVMFFIObjectDecRef(handle)
-                    return tp1[2]
-                end
-                if tp2 !== nothing && tp2[1] == data_ptr
-                    LibTVMFFI.TVMFFIObjectDecRef(handle)
-                    return tp2[2]
+        end
+        for i in 1:N
+    ]
+    
+    # Build the complete function using quote
+    func_def = quote
+        function (func::TVMFunction)($(arg_syms...))
+            # Convert all arguments
+            $(convert_stmts...)
+            
+            # Pack raw values into tuple (stack-allocated via Ref)
+            args_raw = Ref($raw_tuple_expr)
+            result = Ref{LibTVMFFI.TVMFFIAny}(
+                LibTVMFFI.TVMFFIAny(Int32(LibTVMFFI.kTVMFFINone), 0, 0)
+            )
+            
+            # Call TVM function
+            local ret
+            GC.@preserve $(arg_syms...) $(gc_syms...) args_raw begin
+                ret = LibTVMFFI.TVMFFIFunctionCall(
+                    func.handle,
+                    Ptr{LibTVMFFI.TVMFFIAny}(pointer_from_objref(args_raw)),
+                    Int32($N),
+                    Base.unsafe_convert(Ptr{LibTVMFFI.TVMFFIAny}, result)
+                )
+            end
+            check_call(ret)
+            
+            result_raw = result[]
+            
+            # Identity optimization: return original array if data pointer matches
+            if $tp_check
+                if result_raw.type_index == Int32(LibTVMFFI.kTVMFFIDLTensorPtr)
+                    tensor_ptr = reinterpret(Ptr{DLTensor}, result_raw.data)
+                    if tensor_ptr != C_NULL
+                        dltensor = unsafe_load(tensor_ptr)
+                        data_ptr = Ptr{Cvoid}(dltensor.data)
+                        $(dltensor_checks...)
+                    end
+                elseif result_raw.type_index == Int32(LibTVMFFI.kTVMFFITensor)
+                    handle = reinterpret(LibTVMFFI.TVMFFIObjectHandle, result_raw.data)
+                    if handle != C_NULL
+                        dltensor_ptr = get_dltensor_ptr(handle)
+                        dltensor = unsafe_load(dltensor_ptr)
+                        data_ptr = Ptr{Cvoid}(dltensor.data)
+                        $(tensor_checks...)
+                    end
                 end
             end
+            
+            result_owned = TVMAny(result_raw)
+            return take_value(result_owned)
         end
     end
     
-    result_owned = TVMAny(result_raw)
-    return take_value(result_owned)
+    return esc(func_def)
 end
 
-# Specialized method for 3 arguments
-function (func::TVMFunction)(arg1, arg2, arg3)
-    raw1, gc1, tp1 = _convert_arg(arg1)
-    raw2, gc2, tp2 = _convert_arg(arg2)
-    raw3, gc3, tp3 = _convert_arg(arg3)
-    
-    args_raw = Ref((raw1, raw2, raw3))
-    result = Ref{LibTVMFFI.TVMFFIAny}(LibTVMFFI.TVMFFIAny(Int32(LibTVMFFI.kTVMFFINone), 0, 0))
-    
-    local ret
-    GC.@preserve arg1 arg2 arg3 gc1 gc2 gc3 args_raw begin
-        ret = LibTVMFFI.TVMFFIFunctionCall(
-            func.handle,
-            Ptr{LibTVMFFI.TVMFFIAny}(pointer_from_objref(args_raw)),
-            Int32(3),
-            Base.unsafe_convert(Ptr{LibTVMFFI.TVMFFIAny}, result)
-        )
-    end
-    check_call(ret)
-    
-    result_raw = result[]
-    
-    # Identity check - inline
-    if tp1 !== nothing || tp2 !== nothing || tp3 !== nothing
-        if result_raw.type_index == Int32(LibTVMFFI.kTVMFFIDLTensorPtr)
-            tensor_ptr = reinterpret(Ptr{DLTensor}, result_raw.data)
-            if tensor_ptr != C_NULL
-                dltensor = unsafe_load(tensor_ptr)
-                data_ptr = Ptr{Cvoid}(dltensor.data)
-                tp1 !== nothing && tp1[1] == data_ptr && return tp1[2]
-                tp2 !== nothing && tp2[1] == data_ptr && return tp2[2]
-                tp3 !== nothing && tp3[1] == data_ptr && return tp3[2]
-            end
-        elseif result_raw.type_index == Int32(LibTVMFFI.kTVMFFITensor)
-            handle = reinterpret(LibTVMFFI.TVMFFIObjectHandle, result_raw.data)
-            if handle != C_NULL
-                dltensor_ptr = get_dltensor_ptr(handle)
-                dltensor = unsafe_load(dltensor_ptr)
-                data_ptr = Ptr{Cvoid}(dltensor.data)
-                if tp1 !== nothing && tp1[1] == data_ptr
-                    LibTVMFFI.TVMFFIObjectDecRef(handle)
-                    return tp1[2]
-                end
-                if tp2 !== nothing && tp2[1] == data_ptr
-                    LibTVMFFI.TVMFFIObjectDecRef(handle)
-                    return tp2[2]
-                end
-                if tp3 !== nothing && tp3[1] == data_ptr
-                    LibTVMFFI.TVMFFIObjectDecRef(handle)
-                    return tp3[2]
-                end
-            end
-        end
-    end
-    
-    result_owned = TVMAny(result_raw)
-    return take_value(result_owned)
-end
-
-# Specialized method for 4 arguments
-function (func::TVMFunction)(arg1, arg2, arg3, arg4)
-    raw1, gc1, tp1 = _convert_arg(arg1)
-    raw2, gc2, tp2 = _convert_arg(arg2)
-    raw3, gc3, tp3 = _convert_arg(arg3)
-    raw4, gc4, tp4 = _convert_arg(arg4)
-    
-    args_raw = Ref((raw1, raw2, raw3, raw4))
-    result = Ref{LibTVMFFI.TVMFFIAny}(LibTVMFFI.TVMFFIAny(Int32(LibTVMFFI.kTVMFFINone), 0, 0))
-    
-    local ret
-    GC.@preserve arg1 arg2 arg3 arg4 gc1 gc2 gc3 gc4 args_raw begin
-        ret = LibTVMFFI.TVMFFIFunctionCall(
-            func.handle,
-            Ptr{LibTVMFFI.TVMFFIAny}(pointer_from_objref(args_raw)),
-            Int32(4),
-            Base.unsafe_convert(Ptr{LibTVMFFI.TVMFFIAny}, result)
-        )
-    end
-    check_call(ret)
-    
-    result_raw = result[]
-    
-    # Identity check - inline
-    if tp1 !== nothing || tp2 !== nothing || tp3 !== nothing || tp4 !== nothing
-        if result_raw.type_index == Int32(LibTVMFFI.kTVMFFIDLTensorPtr)
-            tensor_ptr = reinterpret(Ptr{DLTensor}, result_raw.data)
-            if tensor_ptr != C_NULL
-                dltensor = unsafe_load(tensor_ptr)
-                data_ptr = Ptr{Cvoid}(dltensor.data)
-                tp1 !== nothing && tp1[1] == data_ptr && return tp1[2]
-                tp2 !== nothing && tp2[1] == data_ptr && return tp2[2]
-                tp3 !== nothing && tp3[1] == data_ptr && return tp3[2]
-                tp4 !== nothing && tp4[1] == data_ptr && return tp4[2]
-            end
-        elseif result_raw.type_index == Int32(LibTVMFFI.kTVMFFITensor)
-            handle = reinterpret(LibTVMFFI.TVMFFIObjectHandle, result_raw.data)
-            if handle != C_NULL
-                dltensor_ptr = get_dltensor_ptr(handle)
-                dltensor = unsafe_load(dltensor_ptr)
-                data_ptr = Ptr{Cvoid}(dltensor.data)
-                if tp1 !== nothing && tp1[1] == data_ptr
-                    LibTVMFFI.TVMFFIObjectDecRef(handle)
-                    return tp1[2]
-                end
-                if tp2 !== nothing && tp2[1] == data_ptr
-                    LibTVMFFI.TVMFFIObjectDecRef(handle)
-                    return tp2[2]
-                end
-                if tp3 !== nothing && tp3[1] == data_ptr
-                    LibTVMFFI.TVMFFIObjectDecRef(handle)
-                    return tp3[2]
-                end
-                if tp4 !== nothing && tp4[1] == data_ptr
-                    LibTVMFFI.TVMFFIObjectDecRef(handle)
-                    return tp4[2]
-                end
-            end
-        end
-    end
-    
-    result_owned = TVMAny(result_raw)
-    return take_value(result_owned)
-end
+# Generate specialized methods for 1-10 arguments
+@_define_narg_method 1
+@_define_narg_method 2
+@_define_narg_method 3
+@_define_narg_method 4
+@_define_narg_method 5
+@_define_narg_method 6
+@_define_narg_method 7
+@_define_narg_method 8
+@_define_narg_method 9
+@_define_narg_method 10
 
 # ============================================================================
-# General method for 5+ arguments (fallback to Vector allocation)
+# General method for 11+ arguments (fallback to Vector allocation)
 # ============================================================================
 function (func::TVMFunction)(args...)
     num_args = length(args)
