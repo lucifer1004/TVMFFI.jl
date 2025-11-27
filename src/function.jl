@@ -104,17 +104,22 @@ function safe_call(
         # Call function
         result = func(julia_args...)
 
-        # Identity optimization for CPU arrays only (DLTensorPtr).
-        # 
-        # NOTE: GPU identity optimization is NOT possible because from_dlpack()
-        # creates a NEW Julia array object each time. result === julia_args[i]
-        # will always be false even if the underlying data is the same.
+        # Identity optimization: if result is same Julia object as an input arg,
+        # return the original argument directly instead of creating a new one.
         for i in 1:num_args
-            if result === julia_args[i] &&
-               arg_raws[i].type_index == Int32(LibTVMFFI.kTVMFFIDLTensorPtr)
-                # DLTensorPtr: return borrowed view directly (no refcount to manage)
-                unsafe_store!(ret, arg_raws[i])
-                return 0
+            if result === julia_args[i]
+                if arg_raws[i].type_index == Int32(LibTVMFFI.kTVMFFIDLTensorPtr)
+                    # DLTensorPtr: return borrowed view directly (no refcount to manage)
+                    unsafe_store!(ret, arg_raws[i])
+                    return 0
+                elseif arg_raws[i].type_index == Int32(LibTVMFFI.kTVMFFITensor)
+                    # TVMTensor: IncRef because caller expects owned reference
+                    # (arg_raws[i] is borrowed, we need to return owned)
+                    handle = reinterpret(LibTVMFFI.TVMFFIObjectHandle, arg_raws[i].data)
+                    LibTVMFFI.TVMFFIObjectIncRef(handle)
+                    unsafe_store!(ret, arg_raws[i])
+                    return 0
+                end
             end
         end
 
@@ -426,23 +431,36 @@ function (func::TVMFunction)(args...)
 
     check_call(ret)
 
-    # Identity optimization: if result is kTVMFFIDLTensorPtr (CPU array) pointing to 
-    # one of our input arrays, return the original array directly (zero-copy)
-    #
-    # NOTE: GPU arrays (kTVMFFITensor) do NOT support identity optimization due to
-    # complex reference counting semantics. See AGENTS.md for details.
+    # Identity optimization: if result points to same data as an input array,
+    # return the original array directly (zero-copy)
     result_raw = result[]
 
-    if result_raw.type_index == Int32(LibTVMFFI.kTVMFFIDLTensorPtr) &&
-       !isempty(tensor_ptr_to_arg)
-        tensor_ptr = reinterpret(Ptr{DLTensor}, result_raw.data)
-        if tensor_ptr != C_NULL
-            dltensor = unsafe_load(tensor_ptr)
-            data_ptr = Ptr{Cvoid}(dltensor.data)
-            if haskey(tensor_ptr_to_arg, data_ptr)
-                # Result points to same data as input - return original array
-                _, original_arr = tensor_ptr_to_arg[data_ptr]
-                return original_arr
+    if !isempty(tensor_ptr_to_arg)
+        if result_raw.type_index == Int32(LibTVMFFI.kTVMFFIDLTensorPtr)
+            # CPU array: check DLTensor data pointer
+            tensor_ptr = reinterpret(Ptr{DLTensor}, result_raw.data)
+            if tensor_ptr != C_NULL
+                dltensor = unsafe_load(tensor_ptr)
+                data_ptr = Ptr{Cvoid}(dltensor.data)
+                if haskey(tensor_ptr_to_arg, data_ptr)
+                    _, original_arr = tensor_ptr_to_arg[data_ptr]
+                    return original_arr
+                end
+            end
+        elseif result_raw.type_index == Int32(LibTVMFFI.kTVMFFITensor)
+            # GPU array: check TVMTensor's DLTensor data pointer
+            handle = reinterpret(LibTVMFFI.TVMFFIObjectHandle, result_raw.data)
+            if handle != C_NULL
+                dltensor_ptr = get_dltensor_ptr(TVMTensor(handle; borrowed = true))
+                dltensor = unsafe_load(dltensor_ptr)
+                data_ptr = Ptr{Cvoid}(dltensor.data)
+                if haskey(tensor_ptr_to_arg, data_ptr)
+                    # Result is same tensor as input - return original array
+                    # DecRef the returned handle since we won't use it
+                    LibTVMFFI.TVMFFIObjectDecRef(handle)
+                    _, original_arr = tensor_ptr_to_arg[data_ptr]
+                    return original_arr
+                end
             end
         end
     end

@@ -61,10 +61,8 @@ function _wrap_rocm_dltensor(::Type{T}, data_ptr::Ptr{Cvoid}, shape::Vector{Int6
         _register_wrapped_array(arr, owner)
         return arr
     else
-        @warn "Non-contiguous ROCm tensor detected, copying data"
-        roc_ptr = Ptr{T}(UInt(data_ptr))
-        src = unsafe_wrap(AMDGPU.ROCArray, roc_ptr, Tuple(shape))
-        return copy(src)
+        error("Non-contiguous GPU arrays (strides=$strides) are not supported. " *
+              "Please use `collect(slice)` to create a contiguous copy before passing to TVM.")
     end
 end
 

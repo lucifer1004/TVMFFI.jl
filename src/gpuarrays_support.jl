@@ -71,7 +71,6 @@ for their specific array types (CuArray, MtlArray, ROCArray, etc.).
 - `DLDevice(kDLROCM, device_id)` for ROCm arrays
 """
 dldevice(::AbstractArray) = DLDevice(Int32(LibTVMFFI.kDLCPU), Int32(0))
-dldevice(::StridedArray) = DLDevice(Int32(LibTVMFFI.kDLCPU), Int32(0))
 
 """
     _dldevice_type_to_symbol(device_type) -> Symbol

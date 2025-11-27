@@ -367,42 +367,8 @@ mutable struct TensorView{T, S}
     end
 end
 
-# Outer constructor for CPU arrays (JuliaOwned)
-function TensorView(
-        arr::Union{Array{T}, SubArray{T}},
-        device::DLDevice = cpu()
-) where {T}
-    # Get shape
-    shape_tuple = size(arr)
-    ndim = length(shape_tuple)
-    shape_vec = collect(Int64, shape_tuple)
-
-    # Get strides - Julia provides this for both Array and SubArray
-    arr_strides = Base.strides(arr)
-    strides_vec = collect(Int64, arr_strides)
-
-    # Get data pointer - Julia's pointer() handles SubArray correctly
-    data_ptr = pointer(arr)
-
-    # byte_offset is 0 (pointer already points to first element)
-    byte_offset = UInt64(0)
-
-    # Get dtype
-    dt = DLDataType(T)
-
-    # Create DLTensor
-    dltensor = DLTensor(
-        data_ptr,
-        device,
-        Int32(ndim),
-        dt,
-        pointer(shape_vec),
-        pointer(strides_vec),
-        byte_offset
-    )
-
-    return TensorView{T, typeof(arr)}(dltensor, shape_vec, strides_vec, arr, JuliaOwned)
-end
+# Note: TensorView constructor for all arrays (CPU and GPU) is in gpuarrays_support.jl
+# It uses dldevice(arr) to auto-detect the device type.
 
 """
     Base.Ref(view::TensorView) -> Ref{DLTensor}

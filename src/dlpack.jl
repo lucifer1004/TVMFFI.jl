@@ -98,7 +98,7 @@ function TVMTensor(arr::StridedArray{T, N}) where {T, N}
 end
 
 #=============================================================================
-  TVMTensor → Julia Array (zero-copy) - SIMPLIFIED
+  TVMTensor → Julia Array (zero-copy)
 =============================================================================#
 
 """
@@ -106,23 +106,17 @@ end
 
 Convert TVMTensor to Julia array (zero-copy).
 
-# SIMPLIFIED DESIGN (2025-11-27)
+The returned array shares memory with the TVMTensor. The TVMTensor
+is kept alive automatically until the array is garbage collected.
 
-**Previous approach** (problematic):
-1. Call TVMFFITensorToDLPack → TVM creates DLManagedTensor with deleter
-2. Try to manage both TVM's deleter AND TVMTensor's DecRef
-3. Result: Double decref, memory corruption
+# Example
+```julia
+tensor = some_tvm_function()
+arr = from_dlpack(tensor)  # Zero-copy, shares memory
+```
 
-**Current approach** (simple):
-1. Get DLTensor pointer directly from TVMTensor (no new allocations)
-2. Wrap as Julia array
-3. Keep TVMTensor alive via _WRAPPED_ARRAYS
-4. Only TVMTensor.DecRef manages lifecycle
-
-This is correct because:
-- TVMTensor already contains a DLTensor structure
-- We don't need TVM to "export" it - we can read it directly
-- Only ONE reference count path: TVMTensor finalizer → DecRef
+# See also
+- [`TVMTensor`](@ref): Create TVMTensor from Julia array
 """
 function from_dlpack(tensor::TVMTensor)
     # Step 1: Get DLTensor pointer directly from TVMTensor

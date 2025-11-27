@@ -22,16 +22,10 @@ under the License.
 
 Julia ↔ TVM FFI ABI Boundary Layer
 
-This file centralizes all type conversions between Julia and TVM FFI.
-Keeping conversions in one place makes it easy to:
-- Verify symmetry between TVMAny(value) and take_value()/copy_value()
-- Update the ABI contract when TVM FFI changes
-- Audit reference counting for all object types
-
-Design Philosophy (Linus style):
-- This is an INTERFACE layer, so centralization is correct
-- Like Linux syscalls.h - all ABI entry points in one place
-- Not like scattered file operations - those follow their data structures
+Centralizes all type conversions between Julia and TVM FFI:
+- `TVMAny(value)`: Julia → TVM
+- `take_value(any)`: TVM → Julia (owned)
+- `copy_value(view)`: TVM → Julia (borrowed)
 """
 
 #=============================================================================
@@ -207,15 +201,7 @@ end
 """
     TVMAny(value::TVMTensor)
 
-Create a TVMAny from a TVM tensor.
-
-This TRANSFERS ownership from TVMTensor to TVMAny:
-- Does NOT IncRef (TVMTensor already owns one reference)
-- Clears TVMTensor's handle to prevent its finalizer from DecRef
-- TVMAny's finalizer will DecRef when it's destroyed
-
-This is the correct behavior for callback return values where we want
-to pass ownership to the C caller without reference count changes.
+Create a TVMAny from a TVM tensor. Increments reference count.
 """
 function TVMAny(value::TVMTensor)
     handle = value.handle

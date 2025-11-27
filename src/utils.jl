@@ -20,38 +20,8 @@ under the License.
 """
     _get_root_array(arr) -> AbstractArray
 
-Unwrap array wrappers to find the underlying root array.
-
-Design Philosophy (Linus-style):
-- Good taste: Use Julia's standard `parent()` interface
-- Simple: Recursively unwrap until we can't anymore
-- Handles all wrappers: OffsetArray, SubArray, ReshapedArray, etc.
-
-# Arguments
-- `arr`: Potentially wrapped array
-
-# Returns
-- `AbstractArray`: The unwrapped underlying array
-
-# Why This Matters
-GPU arrays are often wrapped by:
-- OffsetArrays.OffsetArray (custom indexing)
-- SubArray (views)
-- ReshapedArray (reshape)
-- PermutedDimsArray (permutedims)
-- ReinterpretArray (reinterpret)
-
-All these wrappers implement `parent()` to access the underlying array.
-
-# Examples
-```julia
-using CUDA, OffsetArrays
-
-x = CuArray([1, 2, 3])
-y = OffsetArray(x, -1:1)
-
-unwrapped = _get_root_array(y)  # Returns x (the CuArray)
-```
+Unwrap array wrappers (SubArray, ReshapedArray, etc.) to find the root array.
+Uses Julia's `parent()` interface recursively.
 """
 function _get_root_array(arr)
     current = arr
@@ -69,14 +39,3 @@ function _get_root_array(arr)
     return current
 end
 
-# _navigate_to_root_module has been DELETED!
-#
-# Design Philosophy (Linus-style):
-# - It was a hack to work around not having proper type dispatch
-# - Now we use DLPack.dldevice() for device detection - no duplication!
-# - DLPack.jl already handles type dispatch for all GPU backends
-#
-# If you're looking for how GPU backends are detected, see:
-# - DLPack.jl/ext/CUDAExt.jl: dldevice(::CUDA.CuArray)
-# - TVMFFI/ext/AMDGPUExt.jl: DLPack.dldevice(::AMDGPU.ROCArray)
-# - TVMFFI/ext/MetalExt.jl: DLPack.dldevice(::Metal.MtlArray)

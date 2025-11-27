@@ -89,11 +89,10 @@ function _wrap_cuda_dltensor(::Type{T}, data_ptr::Ptr{Cvoid}, shape::Vector{Int6
 
         return arr
     else
-        # Non-contiguous: must copy
-        @warn "Non-contiguous CUDA tensor detected, copying data"
-        cu_ptr = CUDA.CuPtr{T}(UInt(data_ptr))
-        src = unsafe_wrap(CUDA.CuArray, cu_ptr, Tuple(shape))
-        return copy(src)
+        # Non-contiguous GPU arrays are not supported
+        # unsafe_wrap assumes contiguous memory, and GPU strided copy requires kernel launch
+        error("Non-contiguous GPU arrays (strides=$strides) are not supported. " *
+              "Please use `collect(slice)` to create a contiguous copy before passing to TVM.")
     end
 end
 

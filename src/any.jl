@@ -20,14 +20,10 @@ under the License.
 """
     any.jl
 
-TVM FFI Any/AnyView Types - Ownership-aware value containers.
+Ownership-aware value containers for TVM FFI.
 
-Design inspired by Rust's `Any` and `AnyView<'a>`:
-- `TVMAnyView`: Borrowed reference, does NOT manage lifetime
-- `TVMAny`: Owned value, manages reference count via finalizer
-
-This separation makes ownership explicit at the type level,
-preventing accidental reference count errors.
+- `TVMAnyView`: Borrowed reference (no lifetime management)
+- `TVMAny`: Owned value (finalizer manages reference count)
 """
 
 using .LibTVMFFI

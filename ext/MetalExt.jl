@@ -47,10 +47,8 @@ function TVMFFI._wrap_gpu_dltensor(::Val{_METAL}, ::Type{T}, data_ptr::Ptr{Cvoid
         _register_wrapped_array(arr, owner)
         return arr
     else
-        @warn "Non-contiguous Metal tensor detected, copying data"
-        mtl_ptr = Metal.MtlPtr{T}(UInt(data_ptr))
-        src = unsafe_wrap(Metal.MtlArray, mtl_ptr, Tuple(shape))
-        return copy(src)
+        error("Non-contiguous GPU arrays (strides=$strides) are not supported. " *
+              "Please use `collect(slice)` to create a contiguous copy before passing to TVM.")
     end
 end
 
