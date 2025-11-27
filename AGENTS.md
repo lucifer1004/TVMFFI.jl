@@ -285,6 +285,26 @@ end
 
 **文件**：`function.jl`
 
+#### 3. 小参数数量特化 (2024-11)
+
+**问题**：通用 `(func::TVMFunction)(args...)` 使用 `Vector{Any}` 存储 GC 引用和参数数据。
+
+**解决方案**：
+- 为 1-4 参数生成特化方法，使用命名变量代替 `Vector`
+- 提取公共逻辑到 `_convert_arg` 辅助函数
+- 使用 `Ref((raw1, raw2, ...))` 代替 `Vector{TVMFFIAny}`
+- 内联 identity 优化检查，避免 `filter` 分配
+
+**效果**：
+- 2 参数：94 bytes/call（vs 5+ 参数 494 bytes）
+- 单数组参数：158 bytes/call（vs 通用路径 432 bytes）
+
+**灵感来源**：
+- Python Cython：按类型缓存 setter 函数指针
+- Rust：`const STACK_LEN = 4` 栈上小数组优化
+
+**文件**：`function.jl`
+
 ---
 
 ### 失败的优化尝试
