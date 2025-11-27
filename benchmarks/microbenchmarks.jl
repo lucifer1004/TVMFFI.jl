@@ -109,7 +109,8 @@ test_data = rand(Float32, 1024)
 
 show_result("pointer() without @preserve", @benchmark pointer($test_data))
 
-show_result("pointer() with @preserve", @benchmark GC.@preserve $test_data pointer($test_data))
+show_result(
+    "pointer() with @preserve", @benchmark GC.@preserve $test_data pointer($test_data))
 
 # ============================================================================
 # Section 6: Dict Lookup (Callback Registry)
@@ -125,7 +126,8 @@ for i in 1:1000
 end
 lookup_ptr = Ptr{Cvoid}(UInt(500))
 
-show_result("Dict{Ptr,Any} get (1000 entries)", @benchmark get($bench_registry, $lookup_ptr, nothing))
+show_result("Dict{Ptr,Any} get (1000 entries)",
+    @benchmark get($bench_registry, $lookup_ptr, nothing))
 
 const bench_lock = ReentrantLock()
 show_result("Dict get with ReentrantLock", @benchmark lock($bench_lock) do
@@ -181,11 +183,11 @@ if tvm_identity !== nothing
     ns_ccall = max(0, ns_full - ns1 - ns2 - ns3 - ns4)
 
     println("\nOverhead breakdown:")
-    @printf("    Args allocation:   %6.1f ns (%4.1f%%)\n", ns1, 100*ns1/ns_full)
-    @printf("    Arg conversion:    %6.1f ns (%4.1f%%)\n", ns2, 100*ns2/ns_full)
-    @printf("    Raw data extract:  %6.1f ns (%4.1f%%)\n", ns3, 100*ns3/ns_full)
-    @printf("    Result allocation: %6.1f ns (%4.1f%%)\n", ns4, 100*ns4/ns_full)
-    @printf("    ccall + callback:  %6.1f ns (%4.1f%%)\n", ns_ccall, 100*ns_ccall/ns_full)
+    @printf("    Args allocation:   %6.1f ns (%4.1f%%)\n", ns1, 100 * ns1/ns_full)
+    @printf("    Arg conversion:    %6.1f ns (%4.1f%%)\n", ns2, 100 * ns2/ns_full)
+    @printf("    Raw data extract:  %6.1f ns (%4.1f%%)\n", ns3, 100 * ns3/ns_full)
+    @printf("    Result allocation: %6.1f ns (%4.1f%%)\n", ns4, 100 * ns4/ns_full)
+    @printf("    ccall + callback:  %6.1f ns (%4.1f%%)\n", ns_ccall, 100 * ns_ccall/ns_full)
     @printf("    ---------------------------------\n")
     @printf("    Total:             %6.1f ns\n", ns_full)
 end

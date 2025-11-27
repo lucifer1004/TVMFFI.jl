@@ -32,7 +32,7 @@ function __init__()
             CUDA.synchronize()
         end
     end
-    
+
     # Ensure cleanup atexit is registered
     # This guarantees proper cleanup order: sync → GC → sync → clear handles
     _ensure_cleanup_atexit_registered()
@@ -121,7 +121,8 @@ function TVMFFI._wrap_gpu_dltensor_view(::Val{_CUDA_HOST}, ::Type{T}, data_ptr::
     _wrap_cuda_view(T, data_ptr, shape, strides)
 end
 
-function TVMFFI._wrap_gpu_dltensor_view(::Val{_CUDA_MANAGED}, ::Type{T}, data_ptr::Ptr{Cvoid},
+function TVMFFI._wrap_gpu_dltensor_view(
+        ::Val{_CUDA_MANAGED}, ::Type{T}, data_ptr::Ptr{Cvoid},
         shape::NTuple{N, Int64}, strides::NTuple{N, Int64}) where {T, N}
     _wrap_cuda_view(T, data_ptr, shape, strides)
 end

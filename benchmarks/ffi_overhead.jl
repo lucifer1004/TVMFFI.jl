@@ -31,7 +31,7 @@ function print_bench(name::String, trial::BenchmarkTools.Trial; baseline_ns::Flo
     allocs = BenchmarkTools.allocs(t)
     mem = BenchmarkTools.memory(t)
 
-    overhead_str = baseline_ns > 0 ? @sprintf("%.1fx", ns / baseline_ns) : "-"
+    overhead_str = baseline_ns > 0 ? @sprintf("%.1fx", ns/baseline_ns) : "-"
 
     @printf("  %-42s %8.1f ns  allocs=%d  mem=%d B  [%s]\n",
         name, ns, allocs, mem, overhead_str)
@@ -186,7 +186,8 @@ if tvm_id_array !== nothing
     for size in [64, 256, 1024, 4096]
         arr = rand(Float32, size)
         local trial = @benchmark $tvm_id_array($arr) samples=1000
-        print_bench("TVM func(Float32[$size]) → Array", trial; baseline_ns = baseline_int_ns)
+        print_bench(
+            "TVM func(Float32[$size]) → Array", trial; baseline_ns = baseline_int_ns)
     end
 end
 
@@ -198,7 +199,8 @@ if tvm_id_array !== nothing
         arr = rand(Float32, size)
         view = TensorView(arr)
         local trial = @benchmark $tvm_id_array($view) samples=1000
-        print_bench("TVM func(TensorView[$size]) → Array", trial; baseline_ns = baseline_int_ns)
+        print_bench(
+            "TVM func(TensorView[$size]) → Array", trial; baseline_ns = baseline_int_ns)
     end
 end
 
@@ -210,7 +212,8 @@ if tvm_add_one !== nothing
     for size in [64, 256, 1024, 4096]
         arr = rand(Float32, size)
         local trial = @benchmark $tvm_add_one($arr) samples=1000
-        print_bench("TVM func(Float32[$size] .+= 1) → Array", trial; baseline_ns = baseline_int_ns)
+        print_bench(
+            "TVM func(Float32[$size] .+= 1) → Array", trial; baseline_ns = baseline_int_ns)
     end
 end
 

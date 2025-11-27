@@ -271,11 +271,11 @@ function _cleanup_wrapped_arrays_at_exit()
             end
         end
     end
-    
+
     # Force GC to run TVM finalizers while GPU context is still valid
     # This is critical for GPU arrays that may have TVM references
     GC.gc()
-    
+
     # Sync again after GC (finalizers may have queued GPU work)
     lock(_GPU_SYNC_LOCK) do
         for callback in _GPU_SYNC_CALLBACKS
@@ -351,7 +351,8 @@ end
 """
 Copy data from strided memory to contiguous array.
 """
-function _copy_strided!(dst::Array{T}, src_ptr::Ptr{T}, shape::Vector{Int64}, strides::Vector{Int64}) where {T}
+function _copy_strided!(dst::Array{T}, src_ptr::Ptr{T}, shape::Vector{Int64},
+        strides::Vector{Int64}) where {T}
     ndim = length(shape)
 
     if ndim == 1

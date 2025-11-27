@@ -287,7 +287,7 @@ Get all fields defined for a type.
 function get_fields(type_info::LibTVMFFI.TVMFFITypeInfo)
     fields = FieldInfo[]
     if type_info.num_fields > 0 && type_info.fields != C_NULL
-        for i in 1:type_info.num_fields
+        for i in 1:(type_info.num_fields)
             field_ptr = type_info.fields + (i - 1) * sizeof(LibTVMFFI.TVMFFIFieldInfo)
             field = unsafe_load(Ptr{LibTVMFFI.TVMFFIFieldInfo}(field_ptr))
             push!(fields, FieldInfo(field))
@@ -304,7 +304,7 @@ Get all methods defined for a type.
 function get_methods(type_info::LibTVMFFI.TVMFFITypeInfo)
     methods = MethodInfo[]
     if type_info.num_methods > 0 && type_info.methods != C_NULL
-        for i in 1:type_info.num_methods
+        for i in 1:(type_info.num_methods)
             method_ptr = type_info.methods + (i - 1) * sizeof(LibTVMFFI.TVMFFIMethodInfo)
             method = unsafe_load(Ptr{LibTVMFFI.TVMFFIMethodInfo}(method_ptr))
             push!(methods, MethodInfo(method))

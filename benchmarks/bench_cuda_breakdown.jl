@@ -123,7 +123,8 @@ println("  - CUDA.synchronize:   ~", round(sync_time / 1000, digits = 2), " μs"
 println("  - FFI dispatch:       ~",
     round((call_no_sync_time - tvmtensor_time - from_dlpack_time) / 1000, digits = 2),
     " μs")
-println("  - TVMTensor + DLPack: ~", round((tvmtensor_time + from_dlpack_time) / 1000, digits = 2), " μs")
+println("  - TVMTensor + DLPack: ~",
+    round((tvmtensor_time + from_dlpack_time) / 1000, digits = 2), " μs")
 
 println()
 println("Done.")

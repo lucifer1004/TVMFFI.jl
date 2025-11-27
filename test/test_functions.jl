@@ -139,23 +139,23 @@ end
     function return_tvmtensor(x)
         return TVMTensor(x)
     end
-    
+
     register_global_func("julia.test.return_tvmtensor", return_tvmtensor; override = true)
     func = get_global_func("julia.test.return_tvmtensor")
-    
+
     arr = Float32[1.0, 2.0, 3.0]
     result = func(arr)
     @test result ≈ arr
-    
+
     # Test callback returning TensorView
     function return_tensorview(x)
         view = TensorView(x)
         return view
     end
-    
+
     register_global_func("julia.test.return_tensorview", return_tensorview; override = true)
     func2 = get_global_func("julia.test.return_tensorview")
-    
+
     result2 = func2(arr)
     @test result2 ≈ arr
 end
@@ -167,11 +167,11 @@ end
         arr = Float32[1.0, 2.0, 3.0, 4.0]
         result = identity_func(arr)
         @test result ≈ arr
-        
+
         # Test with Int
         int_result = identity_func(Int64(42))
         @test int_result == 42
-        
+
         # Test with String
         str_result = identity_func("hello world")
         @test str_result == "hello world"
@@ -183,7 +183,7 @@ end
     if nop !== nothing
         # Test 0 args (fallback to Vector path)
         # Note: 0-arg case uses generic path
-        
+
         # Test 1-10 args (specialized methods)
         @test nop(1) === nothing
         @test nop(1, 2) === nothing
@@ -195,10 +195,10 @@ end
         @test nop(1, 2, 3, 4, 5, 6, 7, 8) === nothing
         @test nop(1, 2, 3, 4, 5, 6, 7, 8, 9) === nothing
         @test nop(1, 2, 3, 4, 5, 6, 7, 8, 9, 10) === nothing
-        
+
         # Test 11+ args (fallback path)
         @test nop(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) === nothing
-        
+
         # Test with arrays
         arr1 = Float32[1.0]
         arr2 = Float32[2.0]
@@ -214,10 +214,10 @@ end
     if nop !== nothing
         arr = Float32[1.0, 2.0, 3.0]
         view = TensorView(arr)
-        
+
         # Test passing TensorView directly
         @test nop(view) === nothing
-        
+
         # Test identity with TensorView
         identity = get_global_func("testing.echo")
         if identity !== nothing

@@ -34,9 +34,9 @@ using TVMFFI
 # Load fixture utilities (auto-builds if needed)
 include("fixtures_utils.jl")
 
-println("=" ^ 70)
+println("="^70)
 println("TVM FFI Julia Example: Loading add_one_cuda (GPU)")
-println("=" ^ 70)
+println("="^70)
 
 # Check if CUDA is available
 has_cuda = try
@@ -118,9 +118,9 @@ if has_cuda
     # ============================================================
     # Test 1: Simple 1D vector
     # ============================================================
-    println("=" ^ 70)
+    println("="^70)
     println("Test 1: Simple 1D Vector")
-    println("=" ^ 70)
+    println("="^70)
 
     x_gpu = CUDA.CuArray(Float32[1, 2, 3, 4, 5])
     y_gpu = CUDA.zeros(Float32, 5)
@@ -144,9 +144,9 @@ if has_cuda
     # ============================================================
     # Test 2: 1D strided view (every 2nd element)
     # ============================================================
-    println("\n" * "=" ^ 70)
+    println("\n" * "="^70)
     println("Test 2: 1D Strided View (stride=2)")
-    println("=" ^ 70)
+    println("="^70)
 
     x_vec_gpu = CUDA.CuArray(Float32[1, 2, 3, 4, 5, 6, 7, 8])
     y_vec_gpu = CUDA.zeros(Float32, 8)
@@ -173,9 +173,9 @@ if has_cuda
     # ============================================================
     # Test 3: 2D Matrix (THE BUG WE JUST FIXED!)
     # ============================================================
-    println("\n" * "=" ^ 70)
+    println("\n" * "="^70)
     println("Test 3: 2D Matrix (Column-Major Layout)")
-    println("=" ^ 70)
+    println("="^70)
 
     x_mat_gpu = CUDA.CuArray(Float32[1 2 3; 4 5 6])  # 2×3
     y_mat_gpu = CUDA.similar(x_mat_gpu)
@@ -203,9 +203,9 @@ if has_cuda
     # ============================================================
     # Test 4: Column slice (contiguous)
     # ============================================================
-    println("\n" * "=" ^ 70)
+    println("\n" * "="^70)
     println("Test 4: Column Slice (Contiguous in Column-Major)")
-    println("=" ^ 70)
+    println("="^70)
 
     mat_gpu = CUDA.CuArray(Float32[1 2 3 4; 5 6 7 8; 9 10 11 12])
     x_col = @view mat_gpu[:, 2]  # [2, 6, 10]
@@ -232,9 +232,9 @@ if has_cuda
     # ============================================================
     # Test 5: Row slice (NON-contiguous, stride > 1)
     # ============================================================
-    println("\n" * "=" ^ 70)
+    println("\n" * "="^70)
     println("Test 5: Row Slice (Non-Contiguous, Stride-Aware)")
-    println("=" ^ 70)
+    println("="^70)
 
     x_row = @view mat_gpu[2, :]  # [5, 6, 7, 8]
     y_row = CUDA.similar(x_row)
@@ -260,9 +260,9 @@ if has_cuda
     # ============================================================
     # Test 6: 2D sub-matrix
     # ============================================================
-    println("\n" * "=" ^ 70)
+    println("\n" * "="^70)
     println("Test 6: 2D Sub-Matrix (Complex Strides)")
-    println("=" ^ 70)
+    println("="^70)
 
     big_mat = CUDA.CuArray(Float32[1 2 3 4; 5 6 7 8; 9 10 11 12; 13 14 15 16])
     x_sub = @view big_mat[2:3, 2:3]  # 2×2 sub-matrix
@@ -308,9 +308,9 @@ if has_cuda
     println("\nThis matches CPU functionality - feature parity achieved!")
 end
 
-println("\n" * "=" ^ 70)
+println("\n" * "="^70)
 println("CUDA Example Completed!")
-println("=" ^ 70)
+println("="^70)
 
 println("\n📝 Summary:")
 println("   ✓ Loaded TVM CUDA module with auto-build")

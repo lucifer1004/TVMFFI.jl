@@ -168,7 +168,8 @@ write_to_file(mod, "output.so", "so")
 # See Also
 Python equivalent: `mod.save(file_name, fmt)`
 """
-function write_to_file(mod::TVMModule, file_name::AbstractString, format::AbstractString = "")
+function write_to_file(
+        mod::TVMModule, file_name::AbstractString, format::AbstractString = "")
     write_func = get_global_func("ffi.ModuleWriteToFile")
 
     if write_func === nothing
@@ -245,7 +246,8 @@ if implements_function(mod, "my_func")
 end
 ```
 """
-function implements_function(mod::TVMModule, name::AbstractString, query_imports::Bool = true)
+function implements_function(
+        mod::TVMModule, name::AbstractString, query_imports::Bool = true)
     impl_func = get_global_func("ffi.ModuleImplementsFunction")
 
     if impl_func === nothing

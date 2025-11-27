@@ -253,43 +253,13 @@ function TensorView(arr::S) where {S <: AbstractArray}
         pointer(root_arr)
     end
 
-    # For Metal arrays, extract byte_offset from MtlPtr
-    # Other GPU backends use byte_offset = 0
-    byte_offset = UInt64(0)
-    element_size = sizeof(T)
-    if device.device_type == Int32(LibTVMFFI.kDLMetal)
-        arr_type = typeof(arr)
-        if hasfield(arr_type, :offset)
-            base_offset = arr.offset
-            byte_offset = UInt64(base_offset) * element_size
-        else
-            root_arr = _get_root_array(arr)
-            if arr !== root_arr
-                # Calculate SubArray offset relative to root array
-                root_strides = Base.strides(root_arr)
-                first_indices = ntuple(i -> first(arr.indices[i]), N)
-
-                # Calculate offset: sum((first_index - 1) * stride * element_size)
-                subarray_offset = sum(
-                    (first_indices[i] - 1) * root_strides[i] * element_size
-                    for i in 1:N
-                )
-                byte_offset = UInt64(subarray_offset)
-            end
-        end
-    end
-
-    # Convert pointer to Ptr{Cvoid} - handle both regular Ptr and GPU pointers (CuPtr, etc.)
-    # GPU pointers need conversion through UInt since they don't directly convert to Ptr{Cvoid}
-    data_ptr = Ptr{Cvoid}(UInt(arr_ptr))
-
     return TensorView{T, S, N}(
-        data_ptr,
+        Ptr{Cvoid}(arr_ptr),
         device,
         dt,
         shape_tuple,
         strides_tuple,
-        byte_offset,
+        _get_byte_offset(arr, root_arr),
         arr,
         JuliaOwned
     )

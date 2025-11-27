@@ -18,7 +18,8 @@
         y::Float64
     end
 
-    idx3 = register_object("julia.test.TestObject2", TestObject2; parent_type_index = Int32(64))
+    idx3 = register_object(
+        "julia.test.TestObject2", TestObject2; parent_type_index = Int32(64))
     @test idx3 > 0
     @test idx3 != idx
 end

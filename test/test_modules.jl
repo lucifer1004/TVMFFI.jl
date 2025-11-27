@@ -52,7 +52,7 @@ end
 
 @testset "TVMModule Display" begin
     mod = system_lib()
-    
+
     # Test show
     output = sprint(show, mod)
     @test occursin("TVMModule", output)
@@ -61,19 +61,19 @@ end
 
 @testset "TVMModule getindex" begin
     mod = system_lib()
-    
+
     # Test getindex error for nonexistent function
     @test_throws ErrorException mod["nonexistent_function_12345"]
 end
 
 @testset "Module Inspection Functions" begin
     mod = system_lib()
-    
+
     # Test inspect_source - may or may not return empty string depending on module type
     # For system_lib (library type), this typically returns empty string
     source = inspect_source(mod, "")
     @test source isa String
-    
+
     # Test inspect_source with format
     source_ll = inspect_source(mod, "ll")  # LLVM IR format
     @test source_ll isa String

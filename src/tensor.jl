@@ -54,41 +54,7 @@ function DLTensor(
         strides::Ptr{Int64},
         byte_offset::UInt64
 )
-    # Convert GPU pointers (CuPtr, MtlPtr, etc.) to generic pointer
-    # Handle different pointer types:
-    # - Ptr: Standard Julia pointer, convert directly
-    # - isbits GPU pointers (CuPtr, ROCPtr): Use reinterpret
-    # - Non-isbits GPU pointers (MtlPtr): Extract via Metal.contents + offset
-    ptr_as_uint = if data_ptr isa Ptr
-        UInt(data_ptr)
-    elseif isbitstype(typeof(data_ptr))
-        # GPU pointer that is isbits (CuPtr, ROCPtr, etc.)
-        # Get the raw pointer value via reinterpret
-        reinterpret(UInt, data_ptr)
-    else
-        # Non-isbits GPU pointer (e.g., Metal.MtlPtr)
-        # Check if it's Metal.MtlPtr by checking field names
-        ptr_type = typeof(data_ptr)
-        if hasfield(ptr_type, :buffer) && hasfield(ptr_type, :offset)
-            # Metal.jl specific: MtlPtr{T} has buffer and offset fields
-            # For Metal, we need to pass the MTLBuffer object pointer, not the data pointer
-            # because Metal needs the buffer object to access metadata (size, storage mode, etc.)
-            buffer = getfield(data_ptr, :buffer)
-            # Extract MTLBuffer object pointer from buffer.ptr
-            mtl_buffer_obj = getfield(buffer, :ptr)
-            # Convert ObjectiveC.id to pointer value
-            # This will be reinterpreted as id<MTLBuffer> in C++ code
-            UInt(reinterpret(Ptr{Cvoid}, mtl_buffer_obj))
-        else
-            error("Unsupported GPU pointer type: $(ptr_type). " *
-                  "Expected Ptr, isbits GPU pointer, or Metal.MtlPtr")
-        end
-    end
-
-    # Convert to Ptr{Cvoid}
-    data_cvoid = reinterpret(Ptr{Cvoid}, ptr_as_uint)
-
-    return DLTensor(data_cvoid, device, ndim, dtype, shape, strides, byte_offset)
+    return DLTensor(Ptr{Cvoid}(data_ptr), device, ndim, dtype, shape, strides, byte_offset)
 end
 
 """
@@ -395,7 +361,7 @@ mutable struct TensorView{T, S, N}
             Ptr{Int64}(0), Ptr{Int64}(0), byte_offset
         )
         view = new{T, S, N}(placeholder_dltensor, shape, strides, source, ownership)
-        
+
         # Now fix the shape/strides pointers to point to our inline storage
         _update_dltensor_pointers!(view)
         return view
@@ -409,15 +375,15 @@ Must be called after TensorView construction.
 function _update_dltensor_pointers!(view::TensorView{T, S, N}) where {T, S, N}
     # Get pointer to TensorView object
     view_ptr = pointer_from_objref(view)
-    
+
     # Calculate offsets to _shape and _strides fields
     # Field order: dltensor (48 bytes), _shape (N*8 bytes), _strides (N*8 bytes), ...
     shape_offset = sizeof(DLTensor)
     strides_offset = shape_offset + N * sizeof(Int64)
-    
+
     shape_ptr = Ptr{Int64}(view_ptr + shape_offset)
     strides_ptr = Ptr{Int64}(view_ptr + strides_offset)
-    
+
     # Update DLTensor in place
     old_dltensor = view.dltensor
     new_dltensor = DLTensor(
@@ -429,7 +395,7 @@ function _update_dltensor_pointers!(view::TensorView{T, S, N}) where {T, S, N}
         strides_ptr,
         old_dltensor.byte_offset
     )
-    
+
     # Directly write the new DLTensor to the view
     unsafe_store!(Ptr{DLTensor}(view_ptr), new_dltensor)
     return nothing
@@ -452,14 +418,15 @@ Base.Ref(view::TensorView{T, S, N}) where {T, S, N} = Ref(view.dltensor)
 Convert TensorView to pointer for C calls.
 This is called automatically by ccall.
 """
-function Base.unsafe_convert(::Type{Ptr{DLTensor}}, view::TensorView{T, S, N}) where {T, S, N}
+function Base.unsafe_convert(
+        ::Type{Ptr{DLTensor}}, view::TensorView{T, S, N}) where {T, S, N}
     # Get pointer to the dltensor field within the TensorView
     # The dltensor is the first field, so we can get its address
     return Ptr{DLTensor}(pointer_from_objref(view))
 end
 
 # Convenience alias for type matching without specifying N
-const TensorViewAny{T, S} = TensorView{T, S, N} where N
+const TensorViewAny{T, S} = TensorView{T, S, N} where {N}
 
 # Type system integration for TVMTensor
 type_index(tensor::TVMTensor) = LibTVMFFI.TVMFFIObjectGetTypeIndex(tensor.handle)
@@ -606,7 +573,7 @@ Works with both Vector and Tuple (via eachindex).
 function _compute_c_contiguous_strides(shape)
     ndim = length(shape)
     ndim == 0 && return typeof(shape)()  # Return same container type
-    
+
     # Build strides from right to left: stride[i] = prod(shape[i+1:end])
     return ntuple(ndim) do i
         stride = Int64(1)
@@ -635,7 +602,7 @@ Works with both Vector and Tuple (via eachindex).
 function _compute_f_contiguous_strides(shape)
     ndim = length(shape)
     ndim == 0 && return typeof(shape)()  # Return same container type
-    
+
     # Build strides from left to right: stride[i] = prod(shape[1:i-1])
     return ntuple(ndim) do i
         stride = Int64(1)

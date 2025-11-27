@@ -360,8 +360,9 @@ end
 """
 # Specialized method for zero arguments (avoids Vector allocations)
 function (func::TVMFunction)()
-    result = Ref{LibTVMFFI.TVMFFIAny}(LibTVMFFI.TVMFFIAny(Int32(LibTVMFFI.kTVMFFINone), 0, 0))
-    
+    result = Ref{LibTVMFFI.TVMFFIAny}(LibTVMFFI.TVMFFIAny(
+        Int32(LibTVMFFI.kTVMFFINone), 0, 0))
+
     ret = LibTVMFFI.TVMFFIFunctionCall(
         func.handle,
         Ptr{LibTVMFFI.TVMFFIAny}(C_NULL),
@@ -369,7 +370,7 @@ function (func::TVMFunction)()
         Base.unsafe_convert(Ptr{LibTVMFFI.TVMFFIAny}, result)
     )
     check_call(ret)
-    
+
     result_owned = TVMAny(result[])
     return take_value(result_owned)
 end
@@ -409,59 +410,54 @@ Uses quote blocks for cleaner metaprogramming.
 """
 macro _define_narg_method(N)
     N = N::Int
-    
+
     # Generate symbol names
     arg_syms = [Symbol("arg$i") for i in 1:N]
     raw_syms = [Symbol("raw$i") for i in 1:N]
     gc_syms = [Symbol("gc$i") for i in 1:N]
     tp_syms = [Symbol("tp$i") for i in 1:N]
-    
+
     # Build conversion statements: (raw_i, gc_i, tp_i) = _convert_arg(arg_i)
-    convert_stmts = [
-        :(($(raw_syms[i]), $(gc_syms[i]), $(tp_syms[i])) = _convert_arg($(arg_syms[i])))
-        for i in 1:N
-    ]
-    
+    convert_stmts = [:(($(raw_syms[i]), $(gc_syms[i]), $(tp_syms[i])) = _convert_arg($(arg_syms[i])))
+                     for i in 1:N]
+
     # Build raw tuple expression: (raw1, raw2, ...)
     raw_tuple_expr = Expr(:tuple, raw_syms...)
-    
+
     # Build tp check: tp1 !== nothing || tp2 !== nothing || ...
     tp_check = if N == 1
         :($(tp_syms[1]) !== nothing)
     else
-        foldl((a, tp) -> :($a || $tp !== nothing), tp_syms[2:end]; 
-              init = :($(tp_syms[1]) !== nothing))
+        foldl((a, tp) -> :($a || $tp !== nothing), tp_syms[2:end];
+            init = :($(tp_syms[1]) !== nothing))
     end
-    
+
     # Build DLTensorPtr identity checks (short-circuit return)
-    dltensor_checks = [
-        :($(tp_syms[i]) !== nothing && $(tp_syms[i])[1] == data_ptr && return $(tp_syms[i])[2])
-        for i in 1:N
-    ]
-    
+    dltensor_checks = [:($(tp_syms[i]) !== nothing && $(tp_syms[i])[1] == data_ptr &&
+                         return $(tp_syms[i])[2])
+                       for i in 1:N]
+
     # Build TVMTensor identity checks (with DecRef before return)
-    tensor_checks = [
-        quote
-            if $(tp_syms[i]) !== nothing && $(tp_syms[i])[1] == data_ptr
-                LibTVMFFI.TVMFFIObjectDecRef(handle)
-                return $(tp_syms[i])[2]
-            end
-        end
-        for i in 1:N
-    ]
-    
+    tensor_checks = [quote
+                         if $(tp_syms[i]) !== nothing && $(tp_syms[i])[1] == data_ptr
+                             LibTVMFFI.TVMFFIObjectDecRef(handle)
+                             return $(tp_syms[i])[2]
+                         end
+                     end
+                     for i in 1:N]
+
     # Build the complete function using quote
     func_def = quote
         function (func::TVMFunction)($(arg_syms...))
             # Convert all arguments
             $(convert_stmts...)
-            
+
             # Pack raw values into tuple (stack-allocated via Ref)
             args_raw = Ref($raw_tuple_expr)
             result = Ref{LibTVMFFI.TVMFFIAny}(
                 LibTVMFFI.TVMFFIAny(Int32(LibTVMFFI.kTVMFFINone), 0, 0)
             )
-            
+
             # Call TVM function
             local ret
             GC.@preserve $(arg_syms...) $(gc_syms...) args_raw begin
@@ -473,9 +469,9 @@ macro _define_narg_method(N)
                 )
             end
             check_call(ret)
-            
+
             result_raw = result[]
-            
+
             # Identity optimization: return original array if data pointer matches
             if $tp_check
                 if result_raw.type_index == Int32(LibTVMFFI.kTVMFFIDLTensorPtr)
@@ -495,12 +491,12 @@ macro _define_narg_method(N)
                     end
                 end
             end
-            
+
             result_owned = TVMAny(result_raw)
             return take_value(result_owned)
         end
     end
-    
+
     return esc(func_def)
 end
 
@@ -555,7 +551,8 @@ function (func::TVMFunction)(args...)
     end
 
     # Prepare result
-    result = Ref{LibTVMFFI.TVMFFIAny}(LibTVMFFI.TVMFFIAny(Int32(LibTVMFFI.kTVMFFINone), 0, 0))
+    result = Ref{LibTVMFFI.TVMFFIAny}(LibTVMFFI.TVMFFIAny(
+        Int32(LibTVMFFI.kTVMFFINone), 0, 0))
 
     # CRITICAL GC Safety:
     # We must preserve args, gc_refs, AND args_raw during the C call
@@ -686,7 +683,8 @@ function _wrap_dltensor_view(tensor_ptr::Ptr{DLTensor})
 
         # Check for C-contiguous (row-major, stride[end]=1)
         is_c_contiguous = ndim == 0 || (strides[end] == 1 &&
-                           all(i -> strides[i] == strides[i + 1] * shape[i + 1], 1:(ndim - 1)))
+                           all(
+            i -> strides[i] == strides[i + 1] * shape[i + 1], 1:(ndim - 1)))
 
         if is_f_contiguous && ndim == 1
             # 1D F-contiguous with stride=1 - can use unsafe_wrap
@@ -699,7 +697,8 @@ function _wrap_dltensor_view(tensor_ptr::Ptr{DLTensor})
         else
             # Non-contiguous - must copy with strides
             result = Array{T}(undef, shape...)
-            _copy_strided!(result, data_ptr, collect(Int64.(shape)), collect(Int64.(strides)))
+            _copy_strided!(
+                result, data_ptr, collect(Int64.(shape)), collect(Int64.(strides)))
             return result
         end
     end
@@ -715,13 +714,13 @@ Julia operations. The caller guarantees data validity during the callback.
 """
 function _wrap_gpu_dltensor_view_from_ptr(tensor_ptr::Ptr{DLTensor})
     dltensor = unsafe_load(tensor_ptr)
-    
+
     # Get element type
     T = dtype_to_julia_type(dltensor.dtype)
-    
+
     # Get device type for dispatch
     device_type = dltensor.device.device_type
-    
+
     # Get shape and strides as tuples
     ndim = Int(dltensor.ndim)
     shape = if ndim > 0
@@ -729,14 +728,14 @@ function _wrap_gpu_dltensor_view_from_ptr(tensor_ptr::Ptr{DLTensor})
     else
         ()
     end
-    
+
     strides = if dltensor.strides != C_NULL && ndim > 0
         ntuple(i -> Int64(unsafe_load(dltensor.strides, i)), ndim)
     else
         # Default: C-contiguous → convert to Julia strides (column-major)
         _compute_c_contiguous_strides(shape)
     end
-    
+
     # Dispatch to GPU backend extension
     return _wrap_gpu_dltensor_view(Val(device_type), T, dltensor.data, shape, strides)
 end

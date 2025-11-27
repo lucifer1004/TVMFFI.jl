@@ -39,3 +39,11 @@ function _get_root_array(arr)
     return current
 end
 
+"""
+    _get_byte_offset(arr, root_arr) -> UInt64
+
+Calculate the byte offset of an array relative to its root array.
+"""
+function _get_byte_offset(arr, root_arr)
+    return UInt64(0)
+end

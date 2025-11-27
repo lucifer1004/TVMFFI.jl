@@ -34,9 +34,9 @@ using TVMFFI
 # Load fixture utilities (auto-builds if needed)
 include("fixtures_utils.jl")
 
-println("=" ^ 60)
+println("="^60)
 println("TVM FFI Julia Example: Loading add_one_cpu")
-println("=" ^ 60)
+println("="^60)
 
 # Ensure fixture is built (auto-builds on first run)
 println("\n1. Preparing fixture...")
@@ -335,9 +335,9 @@ println("  • ✅ Safe: views keep parent arrays alive")
 println("  • ✅ Multi-dimensional: Handles any number of dimensions (1D, 2D, 3D, 4D, 5D+)")
 println("  • ✅ High-dimensional slices: Works with slices from N-D arrays")
 
-println("\n" * "=" ^ 60)
+println("\n" * "="^60)
 println("TVM FFI Julia Example - Completed Successfully!")
-println("=" ^ 60)
+println("="^60)
 
 println("\n📝 Summary:")
 println("   ✓ Loaded TVM module from: $module_path")

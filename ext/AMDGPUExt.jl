@@ -32,7 +32,7 @@ function __init__()
             AMDGPU.synchronize()
         end
     end
-    
+
     # Ensure cleanup atexit is registered
     _ensure_cleanup_atexit_registered()
 end

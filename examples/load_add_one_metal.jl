@@ -34,9 +34,9 @@ using TVMFFI
 # Load fixture utilities (auto-builds if needed)
 include("fixtures_utils.jl")
 
-println("=" ^ 70)
+println("="^70)
 println("TVM FFI Julia Example: Loading add_one_metal (Apple GPU)")
-println("=" ^ 70)
+println("="^70)
 
 # Check if Metal is available
 has_metal = try
@@ -128,9 +128,9 @@ if has_metal
     # ============================================================
     # Test 1: Simple 1D vector
     # ============================================================
-    println("=" ^ 70)
+    println("="^70)
     println("Test 1: Simple 1D Vector")
-    println("=" ^ 70)
+    println("="^70)
 
     x_metal = Metal.MtlArray(Float32[1, 2, 3, 4, 5])
     y_metal = Metal.zeros(Float32, 5)
@@ -154,9 +154,9 @@ if has_metal
     # ============================================================
     # Test 2: 1D strided view (every 2nd element)
     # ============================================================
-    println("\n" * "=" ^ 70)
+    println("\n" * "="^70)
     println("Test 2: 1D Strided View (stride=2)")
-    println("=" ^ 70)
+    println("="^70)
 
     x_vec_metal = Metal.MtlArray(Float32[1, 2, 3, 4, 5, 6, 7, 8])
     y_vec_metal = Metal.zeros(Float32, 8)
@@ -183,9 +183,9 @@ if has_metal
     # ============================================================
     # Test 3: 2D Matrix
     # ============================================================
-    println("\n" * "=" ^ 70)
+    println("\n" * "="^70)
     println("Test 3: 2D Matrix (Column-Major Layout)")
-    println("=" ^ 70)
+    println("="^70)
 
     x_mat_metal = Metal.MtlArray(Float32[1 2 3; 4 5 6])  # 2×3
     y_mat_metal = Metal.similar(x_mat_metal)
@@ -213,9 +213,9 @@ if has_metal
     # ============================================================
     # Test 4: Column slice (contiguous)
     # ============================================================
-    println("\n" * "=" ^ 70)
+    println("\n" * "="^70)
     println("Test 4: Column Slice (Contiguous in Column-Major)")
-    println("=" ^ 70)
+    println("="^70)
 
     mat_metal = Metal.MtlArray(Float32[1 2 3 4; 5 6 7 8; 9 10 11 12])
     x_col = @view mat_metal[:, 2]  # [2, 6, 10]
@@ -242,9 +242,9 @@ if has_metal
     # ============================================================
     # Test 5: Row slice (NON-contiguous, stride > 1)
     # ============================================================
-    println("\n" * "=" ^ 70)
+    println("\n" * "="^70)
     println("Test 5: Row Slice (Non-Contiguous, Stride-Aware)")
-    println("=" ^ 70)
+    println("="^70)
 
     x_row = @view mat_metal[2, :]  # [5, 6, 7, 8]
     y_row = Metal.similar(x_row)
@@ -270,9 +270,9 @@ if has_metal
     # ============================================================
     # Test 6: 2D sub-matrix
     # ============================================================
-    println("\n" * "=" ^ 70)
+    println("\n" * "="^70)
     println("Test 6: 2D Sub-Matrix (Complex Strides)")
-    println("=" ^ 70)
+    println("="^70)
 
     big_mat = Metal.MtlArray(Float32[1 2 3 4; 5 6 7 8; 9 10 11 12; 13 14 15 16])
     x_sub = @view big_mat[2:3, 2:3]  # 2×2 sub-matrix
@@ -318,9 +318,9 @@ if has_metal
     println("\nThis matches CPU functionality - feature parity achieved!")
 end
 
-println("\n" * "=" ^ 70)
+println("\n" * "="^70)
 println("Metal Example Completed!")
-println("=" ^ 70)
+println("="^70)
 
 println("\n📝 Summary:")
 println("   ✓ Loaded TVM Metal module with auto-build")

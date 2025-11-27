@@ -272,7 +272,7 @@ end
     any_f32 = TVMAny(f32)
     result = take_value(any_f32)
     @test result isa Float64
-    @test isapprox(result, 3.14, atol=1e-5)
+    @test isapprox(result, 3.14, atol = 1e-5)
 
     f16 = Float16(2.0)
     any_f16 = TVMAny(f16)

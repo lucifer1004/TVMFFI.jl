@@ -18,7 +18,7 @@ module MetalExt
 import TVMFFI
 import TVMFFI: dldevice, _wrap_gpu_dltensor, _wrap_gpu_dltensor_view, DLDevice, LibTVMFFI,
                _register_wrapped_array, _is_contiguous, register_gpu_sync_callback,
-               _ensure_cleanup_atexit_registered, TVMTensor
+               _ensure_cleanup_atexit_registered, _get_byte_offset, TVMTensor
 import Metal
 
 # ============================================================================
@@ -32,7 +32,7 @@ function __init__()
             Metal.synchronize()
         end
     end
-    
+
     # Ensure cleanup atexit is registered
     _ensure_cleanup_atexit_registered()
 end
@@ -66,6 +66,25 @@ function TVMFFI._wrap_gpu_dltensor(::Val{_METAL}, ::Type{T}, data_ptr::Ptr{Cvoid
     else
         error("Non-contiguous GPU arrays (strides=$strides) are not supported. " *
               "Please use `collect(slice)` to create a contiguous copy before passing to TVM.")
+    end
+end
+
+function Base.Ptr{Cvoid}(metal_ptr::Metal.MtlPtr{T}) where {T}
+    Ptr{Cvoid}(UInt(metal_ptr.buffer.ptr))
+end
+
+function TVMFFI._get_byte_offset(arr, root_arr::Metal.MtlArray{T, N}) where {T, N}
+    if hasfield(typeof(arr), :offset)
+        return UInt64(arr.offset) * sizeof(T)
+    elseif arr !== root_arr
+        root_strides = Base.strides(root_arr)
+        subarray_offset = sum(
+            (first(arr.indices[i]) - 1) * root_strides[i] * sizeof(T)
+        for i in 1:N
+        )
+        return UInt64(subarray_offset)
+    else
+        return UInt64(0)
     end
 end
 

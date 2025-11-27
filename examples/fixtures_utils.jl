@@ -66,14 +66,16 @@ function ensure_fixture_built(name::String; verbose::Bool = true)
             run(pipeline(
                 `cmake $(FIXTURES_DIR) -B $(FIXTURES_BUILD_DIR) -DCMAKE_BUILD_TYPE=RelWithDebInfo`,
                 devnull))
-            run(pipeline(`cmake --build $(FIXTURES_BUILD_DIR) --config RelWithDebInfo`, devnull))
+            run(pipeline(
+                `cmake --build $(FIXTURES_BUILD_DIR) --config RelWithDebInfo`, devnull))
         end
 
         # Copy to build/ for easy access
         for lib_file in readdir(FIXTURES_BUILD_DIR)
             if endswith(lib_file, ".so") || endswith(lib_file, ".dylib") ||
                endswith(lib_file, ".dll")
-                cp(joinpath(FIXTURES_BUILD_DIR, lib_file), joinpath(BUILD_DIR, lib_file); force = true)
+                cp(joinpath(FIXTURES_BUILD_DIR, lib_file),
+                    joinpath(BUILD_DIR, lib_file); force = true)
             end
         end
 

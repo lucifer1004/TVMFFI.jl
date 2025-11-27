@@ -180,7 +180,8 @@ end
 
 @testset "TensorView - Various dtypes" begin
     # Test different element types
-    for T in [Float16, Float32, Float64, Int8, Int16, Int32, Int64, UInt8, UInt16, UInt32, UInt64]
+    for T in [
+        Float16, Float32, Float64, Int8, Int16, Int32, Int64, UInt8, UInt16, UInt32, UInt64]
         arr = T[1, 2, 3]
         view = TensorView(arr)
         @test eltype(view) == T
@@ -208,5 +209,6 @@ end
     @test TVMFFI._compute_f_contiguous_strides((10,)) == (1,)
 
     # Alias should work
-    @test TVMFFI._compute_contiguous_strides([3, 4]) == TVMFFI._compute_c_contiguous_strides([3, 4])
+    @test TVMFFI._compute_contiguous_strides([3, 4]) ==
+          TVMFFI._compute_c_contiguous_strides([3, 4])
 end
