@@ -6,8 +6,8 @@
     view = TensorView(x)
 
     @test view isa TensorView
-    @test view.shape == [5]
-    @test view.strides == [1]
+    @test size(view) == (5,)  # Returns NTuple
+    @test view._strides == (1,)  # Internal field is NTuple
     @test view.source === x
     @test view.dltensor.device.device_type == Int32(LibTVMFFI.kDLCPU)
 
@@ -22,8 +22,8 @@ end
     view = TensorView(slice)
 
     @test view isa TensorView
-    @test view.shape == [5]
-    @test view.strides == [1]  # Contiguous slice
+    @test size(view) == (5,)
+    @test view._strides == (1,)  # Contiguous slice
     @test view.source === slice
 
     # Test column slice (contiguous in column-major)
@@ -31,15 +31,15 @@ end
     col = @view matrix[:, 2]
     col_view = TensorView(col)
 
-    @test col_view.shape == [3]
-    @test col_view.strides == [1]  # Contiguous
+    @test size(col_view) == (3,)
+    @test col_view._strides == (1,)  # Contiguous
 
     # Test row slice (non-contiguous in column-major)
     row = @view matrix[2, :]
     row_view = TensorView(row)
 
-    @test row_view.shape == [3]
-    @test row_view.strides == [3]  # Non-contiguous
+    @test size(row_view) == (3,)
+    @test row_view._strides == (3,)  # Non-contiguous
 end
 
 @testset "TensorView - unsafe_convert" begin
@@ -161,13 +161,13 @@ end
 
     row_view = TensorView(row)
     @test size(row_view) == (5,)
-    @test row_view.strides == [4]  # Stride of 4 between elements
+    @test row_view._strides == (4,)  # Stride of 4 between elements
 
     # Test column slice (contiguous)
     col = @view matrix[:, 3]
     col_view = TensorView(col)
     @test size(col_view) == (4,)
-    @test col_view.strides == [1]  # Contiguous
+    @test col_view._strides == (1,)  # Contiguous
 
     # Test 2D subarray
     sub = @view matrix[2:3, 2:4]
@@ -186,15 +186,23 @@ end
 end
 
 @testset "Stride Computation" begin
-    # Test C-contiguous strides (row-major)
+    # Test C-contiguous strides (row-major) - Vector
     @test TVMFFI._compute_c_contiguous_strides([3, 4, 5]) == [20, 5, 1]
     @test TVMFFI._compute_c_contiguous_strides([10]) == [1]
     @test TVMFFI._compute_c_contiguous_strides(Int64[]) == Int64[]
 
-    # Test F-contiguous strides (column-major, Julia-style)
+    # Test C-contiguous strides - Tuple (zero-alloc)
+    @test TVMFFI._compute_c_contiguous_strides((3, 4, 5)) == (20, 5, 1)
+    @test TVMFFI._compute_c_contiguous_strides((10,)) == (1,)
+
+    # Test F-contiguous strides (column-major, Julia-style) - Vector
     @test TVMFFI._compute_f_contiguous_strides([3, 4, 5]) == [1, 3, 12]
     @test TVMFFI._compute_f_contiguous_strides([10]) == [1]
     @test TVMFFI._compute_f_contiguous_strides(Int64[]) == Int64[]
+
+    # Test F-contiguous strides - Tuple (zero-alloc)
+    @test TVMFFI._compute_f_contiguous_strides((3, 4, 5)) == (1, 3, 12)
+    @test TVMFFI._compute_f_contiguous_strides((10,)) == (1,)
 
     # Alias should work
     @test TVMFFI._compute_contiguous_strides([3, 4]) == TVMFFI._compute_c_contiguous_strides([3, 4])

@@ -324,7 +324,7 @@ Enum indicating who manages the underlying tensor data.
 end
 
 """
-    TensorView{T, S}
+    TensorView{T, S, N}
 
 Lightweight DLTensor wrapper for Julia ↔ TVM tensor exchange.
 
@@ -335,36 +335,87 @@ Used for:
 # Type Parameters
 - `T`: Element type (Float32, Int64, etc.)
 - `S`: Source type (Array, CuArray, or Nothing)
+- `N`: Number of dimensions (compile-time constant for zero-alloc shape/strides)
 
 # Fields
-- `dltensor::DLTensor`: DLPack tensor structure
-- `shape::Vector{Int64}`: Shape array (kept alive for dltensor.shape pointer)
-- `strides::Vector{Int64}`: Strides array (kept alive for dltensor.strides pointer)
+- `dltensor::DLTensor`: DLPack tensor structure (pointers point to _shape/_strides)
+- `_shape::NTuple{N, Int64}`: Shape tuple (inline storage, zero allocation)
+- `_strides::NTuple{N, Int64}`: Strides tuple (inline storage, zero allocation)
 - `source::S`: Source array (kept alive to prevent GC)
 - `ownership::TensorOwnership`: Who manages the underlying data
+
+# Performance
+Shape and strides are stored inline as NTuple, avoiding heap allocation.
+This saves ~144 bytes per TensorView creation compared to Vector storage.
 
 # Example
 ```julia
 arr = rand(Float32, 3, 4)
-view = TensorView(arr)  # JuliaOwned, source = arr
+view = TensorView(arr)  # JuliaOwned, source = arr, N=2
 ```
 """
-mutable struct TensorView{T, S}
+mutable struct TensorView{T, S, N}
     dltensor::DLTensor
-    shape::Vector{Int64}
-    strides::Vector{Int64}
+    _shape::NTuple{N, Int64}
+    _strides::NTuple{N, Int64}
     source::S
     ownership::TensorOwnership
 
-    function TensorView{T, S}(
-            dltensor::DLTensor,
-            shape::Vector{Int64},
-            strides::Vector{Int64},
+    # Inner constructor: creates TensorView with correct pointers
+    function TensorView{T, S, N}(
+            data_ptr::Ptr{Cvoid},
+            device::DLDevice,
+            dtype::DLDataType,
+            shape::NTuple{N, Int64},
+            strides::NTuple{N, Int64},
+            byte_offset::UInt64,
             source::S,
             ownership::TensorOwnership
-    ) where {T, S}
-        new{T, S}(dltensor, shape, strides, source, ownership)
+    ) where {T, S, N}
+        # Create with placeholder DLTensor (shape/strides pointers will be fixed)
+        placeholder_dltensor = DLTensor(
+            data_ptr, device, Int32(N), dtype,
+            Ptr{Int64}(0), Ptr{Int64}(0), byte_offset
+        )
+        view = new{T, S, N}(placeholder_dltensor, shape, strides, source, ownership)
+        
+        # Now fix the shape/strides pointers to point to our inline storage
+        _update_dltensor_pointers!(view)
+        return view
     end
+end
+
+"""
+Update DLTensor's shape/strides pointers to point to TensorView's inline storage.
+Must be called after TensorView construction.
+"""
+function _update_dltensor_pointers!(view::TensorView{T, S, N}) where {T, S, N}
+    # Get pointer to TensorView object
+    view_ptr = pointer_from_objref(view)
+    
+    # Calculate offsets to _shape and _strides fields
+    # Field order: dltensor (48 bytes), _shape (N*8 bytes), _strides (N*8 bytes), ...
+    shape_offset = sizeof(DLTensor)
+    strides_offset = shape_offset + N * sizeof(Int64)
+    
+    shape_ptr = Ptr{Int64}(view_ptr + shape_offset)
+    strides_ptr = Ptr{Int64}(view_ptr + strides_offset)
+    
+    # Update DLTensor in place
+    old_dltensor = view.dltensor
+    new_dltensor = DLTensor(
+        old_dltensor.data,
+        old_dltensor.device,
+        old_dltensor.ndim,
+        old_dltensor.dtype,
+        shape_ptr,
+        strides_ptr,
+        old_dltensor.byte_offset
+    )
+    
+    # Directly write the new DLTensor to the view
+    unsafe_store!(Ptr{DLTensor}(view_ptr), new_dltensor)
+    return nothing
 end
 
 # Note: TensorView constructor for all arrays (CPU and GPU) is in gpuarrays_support.jl
@@ -376,7 +427,7 @@ end
 Get a reference to the underlying DLTensor for passing to C functions.
 The TensorView keeps all data alive.
 """
-Base.Ref(view::TensorView) = Ref(view.dltensor)
+Base.Ref(view::TensorView{T, S, N}) where {T, S, N} = Ref(view.dltensor)
 
 """
     Base.unsafe_convert(::Type{Ptr{DLTensor}}, view::TensorView)
@@ -384,11 +435,14 @@ Base.Ref(view::TensorView) = Ref(view.dltensor)
 Convert TensorView to pointer for C calls.
 This is called automatically by ccall.
 """
-function Base.unsafe_convert(::Type{Ptr{DLTensor}}, view::TensorView)
+function Base.unsafe_convert(::Type{Ptr{DLTensor}}, view::TensorView{T, S, N}) where {T, S, N}
     # Get pointer to the dltensor field within the TensorView
     # The dltensor is the first field, so we can get its address
     return Ptr{DLTensor}(pointer_from_objref(view))
 end
+
+# Convenience alias for type matching without specifying N
+const TensorViewAny{T, S} = TensorView{T, S, N} where N
 
 # Type system integration for TVMTensor
 type_index(tensor::TVMTensor) = LibTVMFFI.TVMFFIObjectGetTypeIndex(tensor.handle)
@@ -443,33 +497,31 @@ function TensorView(tensor::TVMTensor)
     # Extract type from dtype
     T = dtype_to_julia_type(dltensor.dtype)
 
-    # Copy shape and strides (we need our own arrays for the pointers)
+    # Get shape and strides as tuples
     ndim = Int(dltensor.ndim)
-    shape_vec = if ndim > 0
-        unsafe_wrap(Array, dltensor.shape, ndim) |> copy
+    shape_tuple = if ndim > 0
+        ntuple(i -> unsafe_load(dltensor.shape, i), ndim)
     else
-        Int64[]
+        ()
     end
 
-    strides_vec = if dltensor.strides != C_NULL && ndim > 0
-        unsafe_wrap(Array, dltensor.strides, ndim) |> copy
+    strides_tuple = if dltensor.strides != C_NULL && ndim > 0
+        ntuple(i -> unsafe_load(dltensor.strides, i), ndim)
     else
         # Compute default C-contiguous strides
-        _compute_contiguous_strides(shape_vec)
+        _compute_c_contiguous_strides(shape_tuple)
     end
 
-    # Create new DLTensor with our shape/strides pointers
-    new_dltensor = DLTensor(
+    return TensorView{T, TVMTensor, ndim}(
         dltensor.data,
         dltensor.device,
-        dltensor.ndim,
         dltensor.dtype,
-        pointer(shape_vec),
-        pointer(strides_vec),
-        dltensor.byte_offset
+        shape_tuple,
+        strides_tuple,
+        dltensor.byte_offset,
+        tensor,
+        TVMOwned
     )
-
-    return TensorView{T, TVMTensor}(new_dltensor, shape_vec, strides_vec, tensor, TVMOwned)
 end
 
 #=============================================================================
@@ -478,12 +530,26 @@ end
 
 """
 Compute C-contiguous (row-major) strides from shape.
+Works with both Vector and Tuple (via eachindex).
 """
+function _compute_c_contiguous_strides(shape)
+    ndim = length(shape)
+    ndim == 0 && return typeof(shape)()  # Return same container type
+    
+    # Build strides from right to left: stride[i] = prod(shape[i+1:end])
+    return ntuple(ndim) do i
+        stride = Int64(1)
+        for j in (i + 1):ndim
+            stride *= shape[j]
+        end
+        stride
+    end
+end
+
+# Vector version returns Vector
 function _compute_c_contiguous_strides(shape::Vector{Int64})
     ndim = length(shape)
-    if ndim == 0
-        return Int64[]
-    end
+    ndim == 0 && return Int64[]
     strides = ones(Int64, ndim)
     for i in (ndim - 1):-1:1
         strides[i] = strides[i + 1] * shape[i + 1]
@@ -493,12 +559,26 @@ end
 
 """
 Compute F-contiguous (column-major, Julia-style) strides from shape.
+Works with both Vector and Tuple (via eachindex).
 """
+function _compute_f_contiguous_strides(shape)
+    ndim = length(shape)
+    ndim == 0 && return typeof(shape)()  # Return same container type
+    
+    # Build strides from left to right: stride[i] = prod(shape[1:i-1])
+    return ntuple(ndim) do i
+        stride = Int64(1)
+        for j in 1:(i - 1)
+            stride *= shape[j]
+        end
+        stride
+    end
+end
+
+# Vector version returns Vector
 function _compute_f_contiguous_strides(shape::Vector{Int64})
     ndim = length(shape)
-    if ndim == 0
-        return Int64[]
-    end
+    ndim == 0 && return Int64[]
     strides = ones(Int64, ndim)
     for i in 2:ndim
         strides[i] = strides[i - 1] * shape[i - 1]
@@ -543,7 +623,7 @@ function _init_dlmanaged_deleter()
     _DLMANAGED_DELETER_CPTR[] = @cfunction(_dlmanaged_deleter, Cvoid, (Ptr{Cvoid},))
 end
 
-function to_dlmanaged_tensor(view::TensorView)
+function to_dlmanaged_tensor(view::TensorView{T, S, N}) where {T, S, N}
     # Create DLManagedTensor
     dlmanaged = DLManagedTensor(
         view.dltensor,
@@ -567,45 +647,51 @@ end
 =============================================================================#
 
 """Get the element type of a TensorView."""
-Base.eltype(::TensorView{T, S}) where {T, S} = T
+Base.eltype(::TensorView{T, S, N}) where {T, S, N} = T
 
 """Get the source type of a TensorView."""
-source_type(::TensorView{T, S}) where {T, S} = S
+source_type(::TensorView{T, S, N}) where {T, S, N} = S
 
 """Get the shape of a TensorView as a tuple."""
-Base.size(view::TensorView) = Tuple(view.shape)
+Base.size(view::TensorView{T, S, N}) where {T, S, N} = view._shape
 
 """Get the number of dimensions."""
-Base.ndims(view::TensorView) = length(view.shape)
+Base.ndims(::TensorView{T, S, N}) where {T, S, N} = N
 
 """Get the total number of elements."""
-Base.length(view::TensorView) = prod(view.shape)
+Base.length(view::TensorView{T, S, N}) where {T, S, N} = prod(view._shape)
 
 """Get the device of a TensorView."""
-device(view::TensorView) = view.dltensor.device
+device(view::TensorView{T, S, N}) where {T, S, N} = view.dltensor.device
 
 """Get the dtype of a TensorView."""
-dtype(view::TensorView) = view.dltensor.dtype
+dtype(view::TensorView{T, S, N}) where {T, S, N} = view.dltensor.dtype
+
+"""Get the shape as a Vector (for compatibility)."""
+shape(view::TensorView{T, S, N}) where {T, S, N} = collect(view._shape)
+
+"""Get the strides as a Vector (for compatibility)."""
+strides(view::TensorView{T, S, N}) where {T, S, N} = collect(view._strides)
 
 """Check if the TensorView is contiguous (either C or F order)."""
-function is_contiguous(view::TensorView)
-    c_strides = _compute_c_contiguous_strides(view.shape)
-    f_strides = _compute_f_contiguous_strides(view.shape)
-    return view.strides == c_strides || view.strides == f_strides
+function is_contiguous(view::TensorView{T, S, N}) where {T, S, N}
+    c_strides = _compute_c_contiguous_strides(view._shape)
+    f_strides = _compute_f_contiguous_strides(view._shape)
+    return view._strides == c_strides || view._strides == f_strides
 end
 
 """Check if the TensorView is C-contiguous (row-major)."""
-function is_c_contiguous(view::TensorView)
-    return view.strides == _compute_c_contiguous_strides(view.shape)
+function is_c_contiguous(view::TensorView{T, S, N}) where {T, S, N}
+    return view._strides == _compute_c_contiguous_strides(view._shape)
 end
 
 """Check if the TensorView is F-contiguous (column-major, Julia-style)."""
-function is_f_contiguous(view::TensorView)
-    return view.strides == _compute_f_contiguous_strides(view.shape)
+function is_f_contiguous(view::TensorView{T, S, N}) where {T, S, N}
+    return view._strides == _compute_f_contiguous_strides(view._shape)
 end
 
 """Check if the TensorView is managed by Julia."""
-is_julia_owned(view::TensorView) = view.ownership == JuliaOwned
+is_julia_owned(view::TensorView{T, S, N}) where {T, S, N} = view.ownership == JuliaOwned
 
 """Check if the TensorView is managed by TVM."""
-is_tvm_owned(view::TensorView) = view.ownership == TVMOwned
+is_tvm_owned(view::TensorView{T, S, N}) where {T, S, N} = view.ownership == TVMOwned
