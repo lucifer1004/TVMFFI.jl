@@ -136,6 +136,14 @@ mutable struct TVMTensor
 end
 
 """
+    TVMTensor(tensor::TVMTensor)
+
+Identity constructor - returns the same tensor (no copy, no extra refcount).
+This enables uniform `TVMTensor(x)` API regardless of whether x is already a TVMTensor.
+"""
+TVMTensor(tensor::TVMTensor) = tensor
+
+"""
     get_dltensor_ptr(tensor::TVMTensor) -> Ptr{DLTensor}
 
 Get pointer to the underlying DLTensor structure.
