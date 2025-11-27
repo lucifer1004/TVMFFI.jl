@@ -122,13 +122,16 @@ end
 end
 
 @testset "GPU Info Functions" begin
-    # Test print_gpu_info (just verify it runs without error)
-    # Note: print_gpu_info() doesn't accept IO parameter, so can't use sprint
-    @test_nowarn print_gpu_info()
+    # Test print_gpu_info (redirect stdout to suppress output during test)
+    @test_nowarn redirect_stdout(devnull) do
+        print_gpu_info()
+    end
 
-    # Test gpu_array_info with CPU array (diagnostic function, just verify no errors)
+    # Test gpu_array_info with CPU array (redirect stdout to suppress output)
     cpu_arr = Float32[1, 2, 3]
-    @test_nowarn gpu_array_info(cpu_arr)
+    @test_nowarn redirect_stdout(devnull) do
+        gpu_array_info(cpu_arr)
+    end
 end
 
 @testset "TensorView - Advanced" begin
