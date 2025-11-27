@@ -541,6 +541,60 @@ function TensorView(tensor::TVMTensor)
     )
 end
 
+"""
+    TensorView(dltensor_ptr::Ptr{DLTensor}, ownership::TensorOwnership)
+
+Create a TensorView from a raw DLTensor pointer.
+
+This constructor is used in callback contexts where TVM passes a DLTensor pointer.
+The ownership determines how the view's lifecycle is managed.
+
+# Safety
+The caller must ensure the DLTensor data remains valid for the TensorView's lifetime.
+This is typically safe in callback contexts where the caller holds the data alive.
+
+# Example
+```julia
+# In a callback receiving DLTensor pointer from TVM:
+tensor_ptr = reinterpret(Ptr{DLTensor}, raw.data)
+view = TensorView(tensor_ptr, TVMOwned)
+# view is valid as long as TVM keeps the tensor alive
+```
+"""
+function TensorView(dltensor_ptr::Ptr{DLTensor}, ownership::TensorOwnership)
+    dltensor = unsafe_load(dltensor_ptr)
+
+    # Extract type from dtype
+    T = dtype_to_julia_type(dltensor.dtype)
+
+    # Get shape and strides as tuples
+    ndim = Int(dltensor.ndim)
+    shape_tuple = if ndim > 0
+        ntuple(i -> unsafe_load(dltensor.shape, i), ndim)
+    else
+        ()
+    end
+
+    strides_tuple = if dltensor.strides != C_NULL && ndim > 0
+        ntuple(i -> unsafe_load(dltensor.strides, i), ndim)
+    else
+        # Compute default C-contiguous strides
+        _compute_c_contiguous_strides(shape_tuple)
+    end
+
+    # source is nothing since we don't own the underlying data
+    return TensorView{T, Nothing, ndim}(
+        dltensor.data,
+        dltensor.device,
+        dltensor.dtype,
+        shape_tuple,
+        strides_tuple,
+        dltensor.byte_offset,
+        nothing,
+        ownership
+    )
+end
+
 #=============================================================================
   Helper Functions
 =============================================================================#

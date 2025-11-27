@@ -697,6 +697,9 @@ function main()
     println("-"^70)
     println("Done")
     println("-"^70)
+    
+    # Note: CUDAExt registers an atexit hook for automatic cleanup,
+    # so manual GC is no longer needed here.
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__

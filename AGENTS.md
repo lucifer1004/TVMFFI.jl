@@ -1,81 +1,81 @@
 # Agent Guide: TVMFFI.jl
 
-本文档为 AI Agent 和开发者提供 TVMFFI.jl 项目的技术指南。
+Technical guide for AI agents and developers working on the TVMFFI.jl project.
 
-## 快速入门
+## Quick Start
 
-### 版本控制：Jujutsu (`jj`)
+### Version Control: Jujutsu (`jj`)
 
-本仓库使用 **Jujutsu (jj)** 而非 git。
+This repository uses **Jujutsu (jj)** instead of git.
 
 ```bash
-jj new                      # 创建新变更
-jj describe -m "message"    # 添加提交信息
-jj st                       # 查看状态
-jj log                      # 查看历史
-jj git push                 # 推送到远程
+jj new                      # Create new change
+jj describe -m "message"    # Add commit message
+jj st                       # View status
+jj log                      # View history
+jj git push                 # Push to remote
 ```
 
-### 开发环境
+### Development Environment
 
 ```bash
-julia --project=.           # 激活环境
+julia --project=.           # Activate environment
 ```
 
 ```julia
-using Pkg; Pkg.instantiate()  # 安装依赖
-using Pkg; Pkg.test()         # 运行测试
-using JuliaFormatter; format(".")  # 格式化代码
+using Pkg; Pkg.instantiate()  # Install dependencies
+using Pkg; Pkg.test()         # Run tests
+using JuliaFormatter; format(".")  # Format code
 ```
 
 ---
 
-## 项目架构
+## Project Architecture
 
-### 目录结构
+### Directory Structure
 
 ```
 src/
-├── LibTVMFFI.jl       # C API 绑定（底层）
-├── TVMFFI.jl          # 主入口
-├── any.jl             # TVMAny/TVMAnyView 所有权容器
-├── conversion.jl      # ABI 边界层（to_tvm_any, take_value, copy_value）
-├── function.jl        # 函数包装器
-├── object.jl          # 对象包装器
-├── tensor.jl          # TensorView 实现
-├── dlpack.jl          # DLPack 零拷贝交换
-└── gpuarrays_support.jl  # GPU 数组支持
+├── LibTVMFFI.jl       # C API bindings (low-level)
+├── TVMFFI.jl          # Main entry point
+├── any.jl             # TVMAny/TVMAnyView ownership containers
+├── conversion.jl      # ABI boundary layer (to_tvm_any, take_value, copy_value)
+├── function.jl        # Function wrappers
+├── object.jl          # Object wrappers
+├── tensor.jl          # TensorView implementation
+├── dlpack.jl          # DLPack zero-copy exchange
+└── gpuarrays_support.jl  # GPU array support
 
 ext/
-├── CUDAExt.jl         # 占位符（DLPack.jl 提供 CUDA 支持）
-├── AMDGPUExt.jl       # AMD ROCm 支持
-└── MetalExt.jl        # Apple Metal 支持
+├── CUDAExt.jl         # NVIDIA CUDA support (device detection, sync callback, tensor view)
+├── AMDGPUExt.jl       # AMD ROCm support
+└── MetalExt.jl        # Apple Metal support
 ```
 
-### 核心类型
+### Core Types
 
-| 类型 | 用途 | type_index |
-|------|------|------------|
-| `TVMObject` | 通用 TVM 对象包装 | 变化 |
-| `TVMFunction` | 可调用函数 | 16 |
-| `TVMTensor` | 引用计数张量 | 70 |
-| `TensorView` | 轻量指针视图 | 7 |
-| `TVMAny` | 拥有所有权的值容器 | - |
-| `TVMAnyView` | 借用的值视图 | - |
+| Type | Purpose | type_index |
+|------|---------|------------|
+| `TVMObject` | Generic TVM object wrapper | varies |
+| `TVMFunction` | Callable function | 16 |
+| `TVMTensor` | Reference-counted tensor | 70 |
+| `TensorView` | Lightweight pointer view | 7 |
+| `TVMAny` | Owned value container | - |
+| `TVMAnyView` | Borrowed value view | - |
 
 ---
 
-## 内存安全规范
+## Memory Safety Guidelines
 
-### 1. GC 安全：指针传递必须用 `GC.@preserve`
+### 1. GC Safety: Pointer Passing Requires `GC.@preserve`
 
 ```julia
-# ❌ 错误 - GC 可能在 C 调用期间回收 str
+# ❌ Wrong - GC may collect str during C call
 str = "hello"
 byte_array = LibTVMFFI.TVMFFIByteArray(pointer(str), sizeof(str))
-ret = some_c_function(byte_array)  # 崩溃！
+ret = some_c_function(byte_array)  # Crash!
 
-# ✅ 正确
+# ✅ Correct
 str = "hello"
 GC.@preserve str begin
     byte_array = LibTVMFFI.TVMFFIByteArray(
@@ -85,99 +85,101 @@ GC.@preserve str begin
 end
 ```
 
-**注意**：`GC.@preserve obj.field` 无效，必须先提取到局部变量。
+**Note**: `GC.@preserve obj.field` doesn't work; extract to local variable first.
 
-### 2. 引用计数：所有权模型
+### 2. Reference Counting: Ownership Model
 
-**黄金法则**：每个 `IncRef` 必须有匹配的 `DecRef`。
+**Golden Rule**: Every `IncRef` must have a matching `DecRef`.
 
 ```julia
-# 场景 1：接管所有权（C 返回新引用）
-TVMObject(handle; borrowed=false)  # 不 IncRef，finalizer 会 DecRef
+# Scenario 1: Take ownership (C returns new reference)
+TVMObject(handle; borrowed=false)  # Don't IncRef, finalizer will DecRef
 
-# 场景 2：借用（C 借给我们）
-TVMObject(handle; borrowed=true)   # IncRef，finalizer 会 DecRef
+# Scenario 2: Borrow (C lends to us)
+TVMObject(handle; borrowed=true)   # IncRef, finalizer will DecRef
 ```
 
-**C API 返回语义**：
+**C API Return Semantics**:
 
-| C API 函数 | 返回类型 | Julia `borrowed` |
-|------------|----------|------------------|
-| `TVMFFIFunctionGetGlobal` | 新引用 | `false` |
-| `TVMFFIFunctionCall` 结果 | 新引用 | `false` |
-| 回调参数 | 借用 | `true` |
+| C API Function | Return Type | Julia `borrowed` |
+|----------------|-------------|------------------|
+| `TVMFFIFunctionGetGlobal` | New reference | `false` |
+| `TVMFFIFunctionCall` result | New reference | `false` |
+| Callback arguments | Borrowed | `true` |
 
-> **设计决策**：`borrowed` 参数**无默认值**。强制显式指定语义，防止误用。
+> **Design Decision**: `borrowed` parameter has **no default value**. Forced explicit specification prevents misuse.
 
-### 3. TVMAny / TVMAnyView 类型系统
+### 3. TVMAny / TVMAnyView Type System
 
 ```julia
-# TVMAnyView - 借用视图（回调参数用）
+# TVMAnyView - Borrowed view (for callback arguments)
 view = TVMAnyView(raw_any)
-value = copy_value(view)  # 复制引用（对象会 IncRef）
+value = copy_value(view)  # Copy reference (object gets IncRef)
 
-# TVMAny - 拥有所有权（函数返回用）
+# TVMAny - Owned (for function returns)
 owned = TVMAny(raw_any)
-value = take_value(owned)  # 取走所有权，owned 失效
+value = take_value(owned)  # Take ownership, owned becomes invalid
 ```
 
-### 4. 代码审查清单
+### 4. Code Review Checklist
 
-- [ ] 每个 `pointer(x)` 都在 `GC.@preserve x` 内
-- [ ] 每个 `TVMFFIByteArray` 构造都保护了源数据
-- [ ] 每个 `IncRef` 有对应的 `DecRef`
-- [ ] `borrowed` 参数与引用来源匹配
-- [ ] 所有堆对象都注册了 finalizer
+- [ ] Every `pointer(x)` is inside `GC.@preserve x`
+- [ ] Every `TVMFFIByteArray` construction protects source data
+- [ ] Every `IncRef` has corresponding `DecRef`
+- [ ] `borrowed` parameter matches reference origin
+- [ ] All heap objects have registered finalizers
 
 ---
 
-## DLPack 张量交换
+## DLPack Tensor Exchange
 
 ### API
 
 ```julia
-# Julia → TVM（零拷贝）
+# Julia → TVM (zero-copy)
 arr = rand(Float32, 3, 4)
 tensor = TVMTensor(arr)
 
-# TVM → Julia（零拷贝）
+# TVM → Julia (zero-copy)
 arr2 = from_dlpack(tensor)
 
-# 轻量视图（需要手动管理生命周期）
+# Lightweight view (manual lifetime management)
 view = TensorView(arr)
 GC.@preserve arr begin
     tvm_func(view)
 end
 ```
 
-### 类型对比
+### Type Comparison
 
-| 类型 | type_index | 引用计数 | 适用场景 |
-|------|------------|----------|----------|
-| `TVMTensor` | 70 | ✅ 有 | GPU 数组，跨边界传递 |
-| `TensorView` | 7 | ❌ 无 | CPU 数组，短期使用 |
+| Type | type_index | Ref Counting | Use Case |
+|------|------------|--------------|----------|
+| `TVMTensor` | 70 | ✅ Yes | `from_dlpack` returns, long-term cross-boundary holding |
+| `TensorView` | 7 | ❌ No | **CPU/GPU arrays**, FFI call arguments (recommended) |
 
-### GPU 支持
+> **Note**: FFI calls now uniformly use `TensorView` for both CPU and GPU. `GC.@preserve` ensures data validity during call.
 
-| 后端 | 扩展 | 数组类型 |
-|------|------|----------|
-| NVIDIA CUDA | DLPack.jl/CUDAExt | CuArray |
+### GPU Support
+
+| Backend | Extension | Array Type |
+|---------|-----------|------------|
+| NVIDIA CUDA | TVMFFI/CUDAExt | CuArray |
 | Apple Metal | TVMFFI/MetalExt | MtlArray |
 | AMD ROCm | TVMFFI/AMDGPUExt | ROCArray |
 
 ---
 
-## 已知限制
+## Known Limitations
 
-### 1. BenchmarkTools + GPU 数组
+### 1. BenchmarkTools + GPU Arrays
 
-**问题**：`@benchmark` 会在迭代间调用 `GC.gc()`，导致返回的 GPU 数组被回收时触发段错误。
+**Problem**: `@benchmark` calls `GC.gc()` between iterations, causing segfaults when returned GPU arrays are collected.
 
 ```julia
-# ❌ 崩溃
+# ❌ Crashes
 @benchmark my_gpu_func($arr)
 
-# ✅ 使用手动计时
+# ✅ Use manual timing
 n = 10000
 t_start = time_ns()
 for _ in 1:n
@@ -187,25 +189,28 @@ CUDA.synchronize()
 t_avg = (time_ns() - t_start) / n
 ```
 
-**原因**：BenchmarkTools 的 `gcscrub()` 与 CUDA.jl finalizer 的交互问题，非 TVMFFI bug。
+**Cause**: BenchmarkTools' `gcscrub()` interaction with CUDA.jl finalizers, not a TVMFFI bug.
 
-### 2. GPU 数组开销
+### 2. GPU Array Performance (Optimized)
 
-GPU 数组通过 `kTVMFFITensor`（type_index=70）传递，有完整引用计数开销：
+GPU arrays now use lightweight `TensorView` (same as CPU), skipping expensive `TVMFFITensorFromDLPack` C API calls:
 
-- CPU 数组 identity：~600 ns
-- GPU 数组 identity：~14-26 μs
+| Operation | Julia | Python | Comparison |
+|-----------|-------|--------|------------|
+| GPU autodlpack (1 arg) | ~200 ns | ~900 ns | **4.5x faster** |
+| GPU autodlpack (3 args) | ~580 ns | ~900 ns | **1.6x faster** |
+| GPU identity | ~210 ns | - | Zero-copy |
 
-对于计算密集操作，此开销可忽略。
+GPU extensions automatically register `atexit` cleanup hooks to ensure TVM finalizers execute before GPU context destruction.
 
 ---
 
-## 设计原则
+## Design Principles
 
-### 1. 消除特殊情况
+### 1. Eliminate Special Cases
 
 ```julia
-# ❌ 字符串匹配和模块导航 hack
+# ❌ String matching and module navigation hacks
 function detect_backend(arr)
     type_name = string(typeof(arr).name.name)
     if occursin("Cu", type_name)
@@ -213,17 +218,17 @@ function detect_backend(arr)
     end
 end
 
-# ✅ 使用 DLPack.jl 的类型派发
+# ✅ Use type dispatch
 function _dlpack_to_tvm_device(arr)
-    dlpack_dev = DLPack.dldevice(arr)  # DLPack 处理一切
+    dlpack_dev = dldevice(arr)  # Dispatch handles everything
     return DLDevice(Int32(dlpack_dev.device_type), Int32(dlpack_dev.device_id))
 end
 ```
 
-### 2. 直接映射
+### 2. Direct Mapping
 
 ```julia
-# Julia struct 布局必须精确匹配 C
+# Julia struct layout must exactly match C
 struct TVMFFIObject
     combined_ref_count::UInt64
     type_index::Int32
@@ -232,98 +237,139 @@ struct TVMFFIObject
 end
 ```
 
-### 3. 实用主义
+### 3. Pragmatism
 
-- C API 不支持的功能，不要 hack
-- 现有代码能工作，验证并文档化（不要重写）
-- 推迟高级功能直到真正需要
+- Don't hack features not supported by C API
+- If existing code works, verify and document (don't rewrite)
+- Defer advanced features until truly needed
 
 ---
 
-## 未来工作（可选）
+## Future Work (Optional)
 
 ### GC Pooling
 
-当前使用 `Dict{Ptr{Cvoid}, Any}` 作为回调注册表。如果以下场景出现性能瓶颈，考虑实现 slot pool：
+Currently using `Dict{Ptr{Cvoid}, Any}` as callback registry. If bottlenecks appear in these scenarios, consider implementing slot pool:
 
-- 大量短生命周期回调
-- 高频函数注册/注销
+- Large numbers of short-lived callbacks
+- High-frequency function registration/unregistration
 
-核心思路：用 `Vector{Any}` + freelist 替代 Dict，暴露整数索引而非指针。
+Core idea: Replace Dict with `Vector{Any}` + freelist, expose integer indices instead of pointers.
 
-**当前状态**：不需要实现。现有实现对全局函数注册足够高效。
+**Current Status**: Not needed. Existing implementation is efficient enough for global function registration.
 
 ---
 
-## 性能优化记录
+## Performance Optimization Records
 
-### 成功的优化
+### Successful Optimizations
 
-#### 1. TensorView NTuple 优化 (2024-11)
+#### 1. TensorView NTuple Optimization (2024-11)
 
-**问题**：TensorView 的 `shape` 和 `strides` 使用 `Vector{Int64}`，每次创建都有堆分配。
+**Problem**: TensorView's `shape` and `strides` used `Vector{Int64}`, heap allocation on every creation.
 
-**解决方案**：
-- `TensorView{T, S}` → `TensorView{T, S, N}`，N 为维度数
-- `shape::Vector{Int64}` → `_shape::NTuple{N, Int64}`（内联存储）
+**Solution**:
+- `TensorView{T, S}` → `TensorView{T, S, N}`, N is dimensionality
+- `shape::Vector{Int64}` → `_shape::NTuple{N, Int64}` (inline storage)
 - `strides::Vector{Int64}` → `_strides::NTuple{N, Int64}`
-- DLTensor 的 shape/strides 指针通过 `pointer_from_objref + fieldoffset` 指向内联存储
+- DLTensor shape/strides pointers point to inline storage via `pointer_from_objref + fieldoffset`
 
-**效果**：每个 TensorView 节省 ~128 bytes
+**Result**: ~128 bytes saved per TensorView
 
-**文件**：`tensor.jl`, `gpuarrays_support.jl`
+**Files**: `tensor.jl`, `gpuarrays_support.jl`
 
-#### 2. FFI 调用路径优化 (2024-11)
+#### 2. FFI Call Path Optimization (2024-11)
 
-**问题**：`TVMFunction` 调用有多余的分配。
+**Problem**: `TVMFunction` calls had redundant allocations.
 
-**解决方案**：
-- 合并 `args_any` 到 `args_raw`：直接存储 `TVMFFIAny` 而非 `TVMAny` 包装
-- `Dict{Ptr, Tuple}` → `Vector{Tuple{Ptr, Any}}`：线性搜索对小 N 更高效且零分配
+**Solution**:
+- Merge `args_any` into `args_raw`: Store `TVMFFIAny` directly instead of `TVMAny` wrapper
+- `Dict{Ptr, Tuple}` → `Vector{Tuple{Ptr, Any}}`: Linear search faster for small N with zero allocation
 
-**效果**：`func(Float32[64])` 从 1200B→688B（-43%），~461ns→~365ns（-21%）
+**Result**: `func(Float32[64])` from 1200B→688B (-43%), ~461ns→~365ns (-21%)
 
-**文件**：`function.jl`
+**Files**: `function.jl`
 
-#### 3. 小参数数量特化 (2024-11)
+#### 3. Small Argument Count Specialization (2024-11)
 
-**问题**：通用 `(func::TVMFunction)(args...)` 使用 `Vector{Any}` 存储 GC 引用和参数数据。
+**Problem**: Generic `(func::TVMFunction)(args...)` uses `Vector{Any}` to store GC refs and argument data.
 
-**解决方案**：
-- 为 1-4 参数生成特化方法，使用命名变量代替 `Vector`
-- 提取公共逻辑到 `_convert_arg` 辅助函数
-- 使用 `Ref((raw1, raw2, ...))` 代替 `Vector{TVMFFIAny}`
-- 内联 identity 优化检查，避免 `filter` 分配
+**Solution**:
+- Generate specialized methods for 1-4 arguments using named variables instead of `Vector`
+- Extract common logic to `_convert_arg` helper function
+- Use `Ref((raw1, raw2, ...))` instead of `Vector{TVMFFIAny}`
+- Inline identity optimization checks, avoid `filter` allocation
 
-**效果**：
-- 2 参数：94 bytes/call（vs 5+ 参数 494 bytes）
-- 单数组参数：158 bytes/call（vs 通用路径 432 bytes）
+**Result**:
+- 2 arguments: 94 bytes/call (vs 5+ args 494 bytes)
+- Single array argument: 158 bytes/call (vs generic path 432 bytes)
 
-**灵感来源**：
-- Python Cython：按类型缓存 setter 函数指针
-- Rust：`const STACK_LEN = 4` 栈上小数组优化
+**Inspiration**:
+- Python Cython: Cache setter function pointers by type
+- Rust: `const STACK_LEN = 4` stack-allocated small array optimization
 
-**文件**：`function.jl`
+**Files**: `function.jl`
+
+#### 4. GPU TensorView Optimization (2024-11)
+
+**Problem**: GPU arrays passed via `TVMTensor` (requiring `TVMFFITensorFromDLPack` C API), 8x slower than CPU arrays.
+
+**Solution**:
+- GPU arrays also use `TensorView` (type_index=7), skipping C API call
+- Add `_wrap_gpu_dltensor_view` interface to convert DLTensor to native GPU arrays (CuArray/MtlArray/ROCArray) in callbacks
+- GPU extensions register sync callback + atexit hook, ensuring correct cleanup order
+
+**Result**:
+- GPU autodlpack: ~1600 ns → ~200 ns (**8x improvement**)
+- Now 4.5x faster than Python (previously 1.8x slower than Python)
+
+**Files**: `function.jl`, `dlpack.jl`, `tensor.jl`, `ext/CUDAExt.jl`, `ext/MetalExt.jl`, `ext/AMDGPUExt.jl`
+
+#### 5. Unified atexit Cleanup (2024-11)
+
+**Problem**: Multiple atexit hooks with overlapping functionality, GPU exit could segfault (finalizer order issues).
+
+**Solution**:
+- Add `GC.gc()` in `_cleanup_wrapped_arrays_at_exit` to force cleanup of all objects
+- GPU extensions only call `_ensure_cleanup_atexit_registered()` to ensure registration
+- Cleanup order: GPU sync → GC.gc() → GPU sync → clear handles
+
+**Result**: Eliminated GPU exit segfaults, simplified code
+
+**Files**: `dlpack.jl`, `ext/CUDAExt.jl`, `ext/MetalExt.jl`, `ext/AMDGPUExt.jl`
+
+#### 6. 1-10 Argument Macro-Generated Specialization (2024-11)
+
+**Problem**: Manually writing 1-4 argument specialized methods was repetitive.
+
+**Solution**:
+- Use `@_define_narg_method N` macro to generate specialized methods for 1-10 arguments
+- Use `quote` blocks and `esc()` for clean metaprogramming
+- Arguments packed as `NTuple` (stack-allocated), avoiding `Vector` heap allocation
+
+**Result**: 80% code reduction, covers 1-10 arguments, same performance
+
+**Files**: `function.jl`
 
 ---
 
-### 失败的优化尝试
+### Failed Optimization Attempts
 
-以下优化尝试未能改善性能，记录以避免重复：
+The following optimization attempts did not improve performance, documented to avoid repetition:
 
-#### 1. safe_call 中的 ntuple ❌
+#### 1. ntuple in safe_call ❌
 
-**尝试**：将 `julia_args` 和 `arg_raws` 从 `Vector` 改为 `ntuple`
+**Attempt**: Change `julia_args` and `arg_raws` from `Vector` to `ntuple`
 
-**结果**：内存减少但时间增加 30-50%
+**Result**: Memory reduced but time increased 30-50%
 
-**原因**：`ntuple(n) do i ... end` 对运行时 `n` 会触发动态编译，JIT 开销大于节省的分配
+**Cause**: `ntuple(n) do i ... end` with runtime `n` triggers dynamic compilation, JIT overhead exceeds saved allocations
 
-**教训**：`ntuple` 只适合编译时已知 `N` 的情况
+**Lesson**: `ntuple` only suitable when `N` is known at compile time
 
-#### 2. take_value_raw (if-elseif 链) ❌
+#### 2. take_value_raw (if-elseif chain) ❌
 
-**尝试**：直接从 `TVMFFIAny` 提取 isbits 类型值，跳过 `TVMAny` 创建
+**Attempt**: Extract isbits type values directly from `TVMFFIAny`, skip `TVMAny` creation
 
 ```julia
 function take_value_raw(raw)
@@ -334,13 +380,13 @@ function take_value_raw(raw)
 end
 ```
 
-**结果**：`func(Int64)` 略快，但 `func()` 返回 `nothing` 时变慢 29%
+**Result**: `func(Int64)` slightly faster, but `func()` returning `nothing` 29% slower
 
-**原因**：if-elseif 分支开销在某些 JIT 场景下超过节省的分配
+**Cause**: if-elseif branch overhead exceeds saved allocations in some JIT scenarios
 
 #### 3. take_value_raw (Val dispatch) ❌
 
-**尝试**：用 Julia 类型分派 + `Val` 实现零开销分派
+**Attempt**: Use Julia type dispatch + `Val` for zero-overhead dispatch
 
 ```julia
 @inline _extract_by_type(::Val{kTVMFFINone}, raw) = nothing
@@ -349,33 +395,33 @@ end
 take_value_raw(raw) = _extract_by_type(Val(raw.type_index), raw)
 ```
 
-**结果**：内存增加 32B，时间变慢
+**Result**: Memory increased 32B, time slower
 
-**原因**：`Val(raw.type_index)` 在运行时创建 Val 实例需要堆分配
+**Cause**: `Val(raw.type_index)` creates Val instance at runtime, requiring heap allocation
 
-**教训**：Val 分派只在类型参数是编译时常量时才是零开销
+**Lesson**: Val dispatch is zero-overhead only when type parameter is compile-time constant
 
-#### 4. take_value_raw (函数表) ❌
+#### 4. take_value_raw (function table) ❌
 
-**尝试**：预生成提取函数表，用索引直接调用
+**Attempt**: Pre-generate extractor function table, call by index
 
 ```julia
 const _EXTRACTOR_FUNCS = ntuple(128) do i
-    # 返回对应的提取函数
+    # Return corresponding extractor function
 end
 take_value_raw(raw) = _EXTRACTOR_FUNCS[raw.type_index + 1](raw)
 ```
 
-**结果**：时间变慢，内存无变化
+**Result**: Time slower, memory unchanged
 
-**原因**：函数表的间接调用开销抵消了任何潜在收益
+**Cause**: Function table indirect call overhead cancels any potential gains
 
 ---
 
-### 优化指南
+### Optimization Guidelines
 
-1. **测量优先**：始终用 `@allocated` 和 `@elapsed` 测量，避免凭感觉优化
-2. **JIT 信任**：Julia JIT 对简单代码优化很好，复杂的手动优化可能适得其反
-3. **编译时 vs 运行时**：`ntuple`、`Val` 等技巧只在编译时已知参数时有效
-4. **微基准 ≠ 宏基准**：单独测量时零分配，完整调用时可能不同
-5. **Profile.Allocs**：精确定位分配来源比猜测更有效
+1. **Measure First**: Always use `@allocated` and `@elapsed`, avoid gut-feeling optimization
+2. **Trust the JIT**: Julia JIT optimizes simple code well, complex manual optimization may backfire
+3. **Compile-time vs Runtime**: `ntuple`, `Val` etc. only effective when parameters known at compile time
+4. **Microbench ≠ Macrobench**: Zero allocation when measured alone, may differ in complete call
+5. **Profile.Allocs**: Precisely locating allocation sources is more effective than guessing

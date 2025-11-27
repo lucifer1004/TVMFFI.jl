@@ -88,9 +88,8 @@ function safe_call(
                     if wrapped !== nothing
                         julia_args[i] = wrapped
                     else
-                        # GPU tensor - fall back to copy_value
-                        view = TVMAnyView(arg_raw)
-                        julia_args[i] = copy_value(view)
+                        # GPU tensor - use _wrap_gpu_dltensor_view for proper GPU array type
+                        julia_args[i] = _wrap_gpu_dltensor_view_from_ptr(tensor_ptr)
                     end
                 else
                     julia_args[i] = nothing
@@ -387,18 +386,12 @@ Returns (raw_any, gc_ref, tensor_ptr_or_nothing)
 """
 @inline function _convert_arg(arg)
     if arg isa AbstractArray && !(arg isa TensorView)
-        device = dldevice(arg)
-        if device.device_type != Int32(LibTVMFFI.kDLCPU)
-            # GPU array
-            tensor = TVMTensor(arg)
-            any = TVMAny(tensor)
-            return (raw_data(any), (any, tensor), (Ptr{Cvoid}(UInt(pointer(arg))), arg))
-        else
-            # CPU array
-            view = TensorView(arg)
-            any = TVMAny(view)
-            return (raw_data(any), (any, view), (view.dltensor.data, arg))
-        end
+        # Use TensorView for ALL arrays (CPU and GPU) - much faster than TVMTensor
+        # TensorView uses kTVMFFIDLTensorPtr (type_index=7), no C API call needed
+        # GPU arrays are safe because GC.@preserve keeps them alive during FFI call
+        view = TensorView(arg)
+        any = TVMAny(view)
+        return (raw_data(any), (any, view), (view.dltensor.data, arg))
     elseif arg isa TensorView
         any = TVMAny(arg)
         return (raw_data(any), (any, arg), (arg.dltensor.data, arg.source))
@@ -539,26 +532,15 @@ function (func::TVMFunction)(args...)
 
     for (i, arg) in enumerate(args)
         if arg isa AbstractArray && !(arg isa TensorView)
-            # Check if GPU array - use TVMTensor (with refcount) for GPU, TensorView for CPU
-            # GPU arrays need kTVMFFITensor type for proper from_dlpack handling in callbacks
-            device = dldevice(arg)
-            if device.device_type != Int32(LibTVMFFI.kDLCPU)
-                # GPU array - use TVMTensor for proper DLPack + refcounting
-                tensor = TVMTensor(arg)
-                any = TVMAny(tensor)
-                args_raw[i] = raw_data(any)
-                gc_refs[i] = (any, tensor)  # Keep both alive
-                # Track data pointer for identity optimization
-                push!(tensor_ptrs, (Ptr{Cvoid}(UInt(pointer(arg))), arg))
-            else
-                # CPU array - use TensorView for zero-copy
-                view = TensorView(arg)
-                any = TVMAny(view)
-                args_raw[i] = raw_data(any)
-                gc_refs[i] = (any, view)  # Keep both alive
-                # Track data pointer for identity optimization
-                push!(tensor_ptrs, (view.dltensor.data, arg))
-            end
+            # Use TensorView for ALL arrays (CPU and GPU) - much faster than TVMTensor
+            # TensorView uses kTVMFFIDLTensorPtr (type_index=7), no C API call needed
+            # GPU arrays are safe because GC.@preserve keeps them alive during FFI call
+            view = TensorView(arg)
+            any = TVMAny(view)
+            args_raw[i] = raw_data(any)
+            gc_refs[i] = (any, view)  # Keep both alive
+            # Track data pointer for identity optimization
+            push!(tensor_ptrs, (view.dltensor.data, arg))
         elseif arg isa TensorView
             any = TVMAny(arg)
             args_raw[i] = raw_data(any)
@@ -721,6 +703,42 @@ function _wrap_dltensor_view(tensor_ptr::Ptr{DLTensor})
             return result
         end
     end
+end
+
+"""
+    _wrap_gpu_dltensor_view_from_ptr(tensor_ptr::Ptr{DLTensor})
+
+Wrap a GPU DLTensor pointer as a native GPU array (CuArray, MtlArray, etc.).
+
+This is used in callback contexts where we need a proper GPU array for
+Julia operations. The caller guarantees data validity during the callback.
+"""
+function _wrap_gpu_dltensor_view_from_ptr(tensor_ptr::Ptr{DLTensor})
+    dltensor = unsafe_load(tensor_ptr)
+    
+    # Get element type
+    T = dtype_to_julia_type(dltensor.dtype)
+    
+    # Get device type for dispatch
+    device_type = dltensor.device.device_type
+    
+    # Get shape and strides as tuples
+    ndim = Int(dltensor.ndim)
+    shape = if ndim > 0
+        ntuple(i -> Int64(unsafe_load(dltensor.shape, i)), ndim)
+    else
+        ()
+    end
+    
+    strides = if dltensor.strides != C_NULL && ndim > 0
+        ntuple(i -> Int64(unsafe_load(dltensor.strides, i)), ndim)
+    else
+        # Default: C-contiguous → convert to Julia strides (column-major)
+        _compute_c_contiguous_strides(shape)
+    end
+    
+    # Dispatch to GPU backend extension
+    return _wrap_gpu_dltensor_view(Val(device_type), T, dltensor.data, shape, strides)
 end
 
 function Base.show(io::IO, func::TVMFunction)

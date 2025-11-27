@@ -182,6 +182,22 @@ function _wrap_gpu_dltensor(::Val{D}, ::Type{T}, data_ptr::Ptr{Cvoid},
 end
 
 """
+Wrap a GPU DLTensor as a temporary view (no owner).
+
+This is used in callback contexts where the caller guarantees the data
+remains valid during the callback. The returned array should not be used
+after the callback returns.
+
+Extensions can override this for specific GPU backends.
+"""
+function _wrap_gpu_dltensor_view(::Val{D}, ::Type{T}, data_ptr::Ptr{Cvoid},
+        shape::NTuple{N, Int64}, strides::NTuple{N, Int64}) where {D, T, N}
+    device_name = _device_type_to_name(Int32(D))
+    error("GPU tensor view on $device_name device requires the appropriate package. " *
+          "Please load CUDA.jl, Metal.jl, or AMDGPU.jl as needed.")
+end
+
+"""
 Check if strides indicate contiguous memory layout.
 """
 function _is_contiguous(shape::Vector{Int64}, strides::Vector{Int64})
@@ -255,12 +271,39 @@ function _cleanup_wrapped_arrays_at_exit()
             end
         end
     end
+    
+    # Force GC to run TVM finalizers while GPU context is still valid
+    # This is critical for GPU arrays that may have TVM references
+    GC.gc()
+    
+    # Sync again after GC (finalizers may have queued GPU work)
+    lock(_GPU_SYNC_LOCK) do
+        for callback in _GPU_SYNC_CALLBACKS
+            try
+                callback()
+            catch
+            end
+        end
+    end
 
     lock(_WRAPPED_ARRAYS_LOCK) do
         for (_, owner) in _WRAPPED_ARRAYS
             owner.handle = C_NULL  # Prevent finalizer DecRef
         end
         empty!(_WRAPPED_ARRAYS)
+    end
+end
+
+"""
+    _ensure_cleanup_atexit_registered()
+
+Ensure the cleanup atexit handler is registered.
+Called by GPU extensions to ensure proper cleanup order.
+"""
+function _ensure_cleanup_atexit_registered()
+    if !_WRAPPED_ARRAYS_ATEXIT_REGISTERED[]
+        atexit(_cleanup_wrapped_arrays_at_exit)
+        _WRAPPED_ARRAYS_ATEXIT_REGISTERED[] = true
     end
 end
 
@@ -277,10 +320,7 @@ When array is GC'd:
 Simple design: just reference holding, no complex deleter management.
 """
 function _register_wrapped_array(arr, owner::TVMTensor)
-    if !_WRAPPED_ARRAYS_ATEXIT_REGISTERED[]
-        atexit(_cleanup_wrapped_arrays_at_exit)
-        _WRAPPED_ARRAYS_ATEXIT_REGISTERED[] = true
-    end
+    _ensure_cleanup_atexit_registered()
 
     lock(_WRAPPED_ARRAYS_LOCK) do
         _WRAPPED_ARRAYS[objectid(arr)] = owner

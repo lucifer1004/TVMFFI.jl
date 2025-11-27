@@ -16,9 +16,26 @@ tensor = TVMTensor(arr)  # Zero-copy!
 module AMDGPUExt
 
 import TVMFFI
-import TVMFFI: dldevice, _wrap_gpu_dltensor, DLDevice, LibTVMFFI,
-               _register_wrapped_array, _is_contiguous, TVMTensor
+import TVMFFI: dldevice, _wrap_gpu_dltensor, _wrap_gpu_dltensor_view, DLDevice, LibTVMFFI,
+               _register_wrapped_array, _is_contiguous, register_gpu_sync_callback,
+               _ensure_cleanup_atexit_registered, TVMTensor
 import AMDGPU
+
+# ============================================================================
+# GPU Synchronization for cleanup
+# ============================================================================
+
+function __init__()
+    # Register AMDGPU sync callback for cleanup
+    register_gpu_sync_callback() do
+        if AMDGPU.functional()
+            AMDGPU.synchronize()
+        end
+    end
+    
+    # Ensure cleanup atexit is registered
+    _ensure_cleanup_atexit_registered()
+end
 
 # ============================================================================
 # Device Detection
@@ -64,6 +81,40 @@ function _wrap_rocm_dltensor(::Type{T}, data_ptr::Ptr{Cvoid}, shape::Vector{Int6
         error("Non-contiguous GPU arrays (strides=$strides) are not supported. " *
               "Please use `collect(slice)` to create a contiguous copy before passing to TVM.")
     end
+end
+
+# ============================================================================
+# GPU Tensor View (for callbacks, no owner)
+# ============================================================================
+
+function TVMFFI._wrap_gpu_dltensor_view(::Val{_ROCM}, ::Type{T}, data_ptr::Ptr{Cvoid},
+        shape::NTuple{N, Int64}, strides::NTuple{N, Int64}) where {T, N}
+    _wrap_rocm_view(T, data_ptr, shape, strides)
+end
+
+function TVMFFI._wrap_gpu_dltensor_view(::Val{_ROCM_HOST}, ::Type{T}, data_ptr::Ptr{Cvoid},
+        shape::NTuple{N, Int64}, strides::NTuple{N, Int64}) where {T, N}
+    _wrap_rocm_view(T, data_ptr, shape, strides)
+end
+
+function _wrap_rocm_view(::Type{T}, data_ptr::Ptr{Cvoid},
+        shape::NTuple{N, Int64}, strides::NTuple{N, Int64}) where {T, N}
+    if N == 0 || _is_tuple_contiguous(shape, strides)
+        roc_ptr = Ptr{T}(UInt(data_ptr))
+        return unsafe_wrap(AMDGPU.ROCArray, roc_ptr, shape)
+    else
+        error("Non-contiguous GPU arrays (strides=$strides) are not supported in callbacks.")
+    end
+end
+
+function _is_tuple_contiguous(shape::NTuple{N, Int64}, strides::NTuple{N, Int64}) where {N}
+    N == 0 && return true
+    expected = Int64(1)
+    for i in 1:N
+        strides[i] != expected && return false
+        expected *= shape[i]
+    end
+    return true
 end
 
 end # module AMDGPUExt
