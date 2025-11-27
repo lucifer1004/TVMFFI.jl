@@ -231,7 +231,8 @@ end
 function FieldInfo(info::LibTVMFFI.TVMFFIFieldInfo)
     name = unsafe_string(info.name.data, info.name.size)
     doc = info.doc.data == C_NULL ? "" : unsafe_string(info.doc.data, info.doc.size)
-    metadata = info.metadata.data == C_NULL ? "" : unsafe_string(info.metadata.data, info.metadata.size)
+    metadata = info.metadata.data == C_NULL ? "" :
+               unsafe_string(info.metadata.data, info.metadata.size)
 
     FieldInfo(
         name, doc, metadata, info.flags,
@@ -259,7 +260,8 @@ end
 function MethodInfo(info::LibTVMFFI.TVMFFIMethodInfo)
     name = unsafe_string(info.name.data, info.name.size)
     doc = info.doc.data == C_NULL ? "" : unsafe_string(info.doc.data, info.doc.size)
-    metadata = info.metadata.data == C_NULL ? "" : unsafe_string(info.metadata.data, info.metadata.size)
+    metadata = info.metadata.data == C_NULL ? "" :
+               unsafe_string(info.metadata.data, info.metadata.size)
 
     # Extract the method handle from TVMFFIAny
     method_handle = reinterpret(LibTVMFFI.TVMFFIObjectHandle, info.method.data)
@@ -332,7 +334,8 @@ function get_field_value(obj, field::FieldInfo)
     result = Ref{LibTVMFFI.TVMFFIAny}()
 
     # Call the getter: int (*getter)(void* field_addr, TVMFFIAny* result)
-    ret = ccall(field.getter, Cint, (Ptr{Cvoid}, Ptr{LibTVMFFI.TVMFFIAny}), field_addr, result)
+    ret = ccall(
+        field.getter, Cint, (Ptr{Cvoid}, Ptr{LibTVMFFI.TVMFFIAny}), field_addr, result)
 
     if ret != 0
         error("Failed to get field '$(field.name)'")
@@ -368,7 +371,8 @@ function set_field_value!(obj, field::FieldInfo, value)
     # Call the setter: int (*setter)(void* field_addr, const TVMFFIAny* value)
     # Use GC.@preserve to ensure value_any stays alive during the ccall
     GC.@preserve value_any begin
-        ret = ccall(field.setter, Cint, (Ptr{Cvoid}, Ref{LibTVMFFI.TVMFFIAny}), field_addr, value_any.data)
+        ret = ccall(field.setter, Cint, (Ptr{Cvoid}, Ref{LibTVMFFI.TVMFFIAny}),
+            field_addr, value_any.data)
     end
 
     if ret != 0
@@ -391,7 +395,7 @@ function call_method(obj, method::MethodInfo, args...)
     else
         # Instance method: prepend self
         handle = getfield(obj, :handle)
-        tvm_obj = TVMObject(handle; borrowed=true)
+        tvm_obj = TVMObject(handle; borrowed = true)
         return method_func(tvm_obj, args...)
     end
 end
@@ -509,9 +513,9 @@ macro register_object(type_key, struct_def)
         if expr isa LineNumberNode
             continue
         elseif Meta.isexpr(expr, :(::))
-            push!(field_decls, (name=expr.args[1], type=expr.args[2]))
+            push!(field_decls, (name = expr.args[1], type = expr.args[2]))
         elseif expr isa Symbol
-            push!(field_decls, (name=expr, type=:Any))
+            push!(field_decls, (name = expr, type = :Any))
         end
     end
 
@@ -535,8 +539,8 @@ macro register_object(type_key, struct_def)
               - `borrowed=false`: Owned reference, take without IncRef
             """
             function $(esc(type_name))(
-                handle::LibTVMFFI.TVMFFIObjectHandle;
-                borrowed::Bool
+                    handle::LibTVMFFI.TVMFFIObjectHandle;
+                    borrowed::Bool
             )
                 if handle == C_NULL
                     error("Cannot create " * $(string(type_name)) * " from NULL handle")
@@ -646,7 +650,7 @@ macro register_object(type_key, struct_def)
             error("$($(string(type_name))) has no property '$name'")
         end
 
-        function Base.propertynames(obj::$(esc(type_name)), private::Bool=false)
+        function Base.propertynames(obj::$(esc(type_name)), private::Bool = false)
             names = Symbol[:handle]
             fields, methods = _get_reflection_cache($(esc(type_name)))
 
@@ -749,12 +753,12 @@ function ffi_init(T::Type, args...; kwargs...)
 
     # If result is a TVMObject, wrap it in T
     if result isa TVMObject
-        return T(result.handle; borrowed=true)
+        return T(result.handle; borrowed = true)
     end
 
     # If result is a raw handle (shouldn't happen but just in case)
     if result isa Ptr{Cvoid} || result isa LibTVMFFI.TVMFFIObjectHandle
-        return T(result; borrowed=false)
+        return T(result; borrowed = false)
     end
 
     error("Unexpected result type from __ffi_init__: $(typeof(result))")

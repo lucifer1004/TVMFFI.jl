@@ -1,26 +1,100 @@
 """
 CUDA Extension for TVMFFI.jl
 
-This extension is a placeholder - the actual DLPack integration for CUDA
-is provided by DLPack.jl's own CUDAExt.
+This extension enables zero-copy tensor exchange between Julia CuArrays and TVM.
 
-When user does `using TVMFFI; using CUDA`:
-- DLPack.jl's CUDAExt handles: DLPack.share, DLPack.dldevice, jlarray_type, unsafe_wrap
-- TVMFFI uses these through the DLPack interface
+# Usage
+```julia
+using TVMFFI
+using CUDA  # Triggers this extension
 
-# Design Philosophy (Linus-style)
-- Don't duplicate what DLPack.jl already provides
-- Empty module is better than redundant code
-- Keep the extension file for potential future TVMFFI-specific CUDA functionality
+arr = CUDA.CuArray(Float32[1, 2, 3])
+tensor = TVMTensor(arr)  # Zero-copy!
+```
 """
 module CUDAExt
 
-# DLPack.jl's CUDAExt already provides:
-# - DLPack.share(::CUDA.StridedCuArray)
-# - DLPack.dldevice(::CUDA.StridedCuArray)
-# - DLPack.jlarray_type(::Val{kDLCUDA})
-# - Base.unsafe_wrap(::Type{<:CUDA.CuArray}, ::DLPack.DLManager)
-#
-# No need to duplicate here!
+import TVMFFI
+import TVMFFI: dldevice, _wrap_gpu_dltensor, DLDevice, LibTVMFFI,
+               _register_wrapped_array, _is_contiguous, register_gpu_sync_callback,
+               TVMTensor
+import CUDA
+
+# ============================================================================
+# GPU Synchronization for cleanup
+# ============================================================================
+
+function __init__()
+    # Register CUDA sync callback for cleanup
+    register_gpu_sync_callback() do
+        if CUDA.functional()
+            CUDA.synchronize()
+        end
+    end
+end
+
+# ============================================================================
+# Device Detection
+# ============================================================================
+
+function TVMFFI.dldevice(x::CUDA.CuArray)
+    dev = CUDA.device(x)
+    dev_id = dev.handle  # 0-indexed
+    return DLDevice(Int32(LibTVMFFI.kDLCUDA), Int32(dev_id))
+end
+
+function TVMFFI.dldevice(x::SubArray{T, N, <:CUDA.CuArray}) where {T, N}
+    return TVMFFI.dldevice(parent(x))
+end
+
+# ============================================================================
+# CUDA Tensor Wrapping (TVM → Julia) - SIMPLIFIED
+# ============================================================================
+
+# Device type constants
+const _CUDA = Int32(LibTVMFFI.kDLCUDA)
+const _CUDA_HOST = Int32(LibTVMFFI.kDLCUDAHost)
+const _CUDA_MANAGED = Int32(LibTVMFFI.kDLCUDAManaged)
+
+# Main CUDA device
+function TVMFFI._wrap_gpu_dltensor(::Val{_CUDA}, ::Type{T}, data_ptr::Ptr{Cvoid},
+        shape::Vector{Int64}, strides::Vector{Int64},
+        owner::TVMTensor) where {T}
+    _wrap_cuda_dltensor(T, data_ptr, shape, strides, owner)
+end
+
+# CUDA Host memory
+function TVMFFI._wrap_gpu_dltensor(::Val{_CUDA_HOST}, ::Type{T}, data_ptr::Ptr{Cvoid},
+        shape::Vector{Int64}, strides::Vector{Int64},
+        owner::TVMTensor) where {T}
+    _wrap_cuda_dltensor(T, data_ptr, shape, strides, owner)
+end
+
+# CUDA Managed memory
+function TVMFFI._wrap_gpu_dltensor(::Val{_CUDA_MANAGED}, ::Type{T}, data_ptr::Ptr{Cvoid},
+        shape::Vector{Int64}, strides::Vector{Int64},
+        owner::TVMTensor) where {T}
+    _wrap_cuda_dltensor(T, data_ptr, shape, strides, owner)
+end
+
+function _wrap_cuda_dltensor(::Type{T}, data_ptr::Ptr{Cvoid}, shape::Vector{Int64},
+        strides::Vector{Int64}, owner::TVMTensor) where {T}
+    if _is_contiguous(shape, strides)
+        # Zero-copy: wrap as CuArray
+        cu_ptr = CUDA.CuPtr{T}(UInt(data_ptr))
+        arr = unsafe_wrap(CUDA.CuArray, cu_ptr, Tuple(shape))
+
+        # Simple lifecycle: just keep owner alive
+        _register_wrapped_array(arr, owner)
+
+        return arr
+    else
+        # Non-contiguous: must copy
+        @warn "Non-contiguous CUDA tensor detected, copying data"
+        cu_ptr = CUDA.CuPtr{T}(UInt(data_ptr))
+        src = unsafe_wrap(CUDA.CuArray, cu_ptr, Tuple(shape))
+        return copy(src)
+    end
+end
 
 end # module CUDAExt

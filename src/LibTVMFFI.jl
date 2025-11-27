@@ -722,9 +722,9 @@ The returned tensor takes ownership of the DLManagedTensor.
 - `(return_code, tensor_handle)`: 0 on success, tensor handle
 """
 function TVMFFITensorFromDLPack(
-    from::Ptr{Cvoid},
-    require_alignment::Int32,
-    require_contiguous::Int32
+        from::Ptr{Cvoid},
+        require_alignment::Int32,
+        require_contiguous::Int32
 )
     out = Ref{TVMFFIObjectHandle}(C_NULL)
     ret = @ccall libtvm_ffi.TVMFFITensorFromDLPack(
@@ -772,9 +772,9 @@ The returned tensor takes ownership of the DLManagedTensorVersioned.
 - `(return_code, tensor_handle)`: 0 on success, tensor handle
 """
 function TVMFFITensorFromDLPackVersioned(
-    from::Ptr{Cvoid},
-    require_alignment::Int32,
-    require_contiguous::Int32
+        from::Ptr{Cvoid},
+        require_alignment::Int32,
+        require_contiguous::Int32
 )
     out = Ref{TVMFFIObjectHandle}(C_NULL)
     ret = @ccall libtvm_ffi.TVMFFITensorFromDLPackVersioned(

@@ -36,7 +36,7 @@ Design Philosophy (Linus style):
 
 #=============================================================================
   Julia → TVMAny Constructors
-  
+
   Creates managed TVMAny from Julia values.
   - POD types: No reference counting needed
   - Object types: IncRef + finalizer manages DecRef
@@ -68,11 +68,31 @@ TVMAny(value::UInt8) = TVMAny(Int64(value))
 """
     TVMAny(value::Float64)
 
-Create a TVMAny from a floating-point value.
+Create a TVMAny from a 64-bit floating-point value.
 """
 function TVMAny(value::Float64)
     raw = LibTVMFFI.TVMFFIAny(Int32(LibTVMFFI.kTVMFFIFloat), 0, reinterpret(UInt64, value))
     TVMAny(raw, Val(:no_finalizer))
+end
+
+"""
+    TVMAny(value::Float32)
+
+Create a TVMAny from a 32-bit floating-point value.
+Note: TVM FFI uses 64-bit floats internally, so Float32 is promoted to Float64.
+"""
+function TVMAny(value::Float32)
+    TVMAny(Float64(value))
+end
+
+"""
+    TVMAny(value::Float16)
+
+Create a TVMAny from a 16-bit floating-point value.
+Note: TVM FFI uses 64-bit floats internally, so Float16 is promoted to Float64.
+"""
+function TVMAny(value::Float16)
+    TVMAny(Float64(value))
 end
 
 """
@@ -187,18 +207,33 @@ end
 """
     TVMAny(value::TVMTensor)
 
-Create a TVMAny from a TVM tensor. Increments reference count.
+Create a TVMAny from a TVM tensor.
+
+This TRANSFERS ownership from TVMTensor to TVMAny:
+- Does NOT IncRef (TVMTensor already owns one reference)
+- Clears TVMTensor's handle to prevent its finalizer from DecRef
+- TVMAny's finalizer will DecRef when it's destroyed
+
+This is the correct behavior for callback return values where we want
+to pass ownership to the C caller without reference count changes.
 """
 function TVMAny(value::TVMTensor)
-    if value.handle != C_NULL
-        LibTVMFFI.TVMFFIObjectIncRef(value.handle)
+    handle = value.handle
+    if handle == C_NULL
+        return TVMAny(LibTVMFFI.TVMFFIAny(Int32(LibTVMFFI.kTVMFFINone), 0, 0))
     end
+
+    # IncRef: TVMAny will have its own reference, TVMTensor keeps its reference
+    # Both will DecRef independently via their finalizers
+    LibTVMFFI.TVMFFIObjectIncRef(handle)
+
+    # Create TVMAny - main constructor registers finalizer that will DecRef
     raw = LibTVMFFI.TVMFFIAny(
         Int32(LibTVMFFI.kTVMFFITensor),
         0,
-        reinterpret(UInt64, value.handle)
+        reinterpret(UInt64, handle)
     )
-    TVMAny(raw)  # Main constructor registers finalizer
+    TVMAny(raw)
 end
 
 # ---- TensorView Types (pointer-based, no refcounting) ----
@@ -249,7 +284,7 @@ end
 
 #=============================================================================
   TVM FFI Any → Julia (Decoding)
-  
+
   Two main APIs:
   - take_value(any::TVMAny) - Extract from owned value (no IncRef needed)
   - copy_value(view::TVMAnyView) - Extract from borrowed view (needs copy/IncRef)
@@ -277,14 +312,14 @@ After calling take_value, the TVMAny is invalidated. Do not use it again.
 """
 function take_value(any::TVMAny)
     data = any.data
-    
+
     # Invalidate the TVMAny to prevent finalizer from DecRef
     # This transfers ownership to the returned wrapper
     if data.type_index >= Int32(LibTVMFFI.kTVMFFIStaticObjectBegin)
         # Clear the data so finalizer won't DecRef
         any.data = LibTVMFFI.TVMFFIAny(Int32(LibTVMFFI.kTVMFFINone), 0, 0)
     end
-    
+
     _extract_value(data, false)
 end
 
@@ -344,7 +379,7 @@ function _extract_value(any::LibTVMFFI.TVMFFIAny, borrowed::Bool)
         lanes = UInt16((any.data >> 16) & 0xFFFF)
         return DLDataType(code, bits, lanes)
     elseif type_idx == Int32(LibTVMFFI.kTVMFFIDLTensorPtr)
-        # DLTensor pointer - always copy data
+        # DLTensor pointer - copy data for CPU, error for GPU
         # 
         # WHY COPY? Because DLTensorPtr is just a pointer without ownership info.
         # We don't know:
@@ -352,20 +387,20 @@ function _extract_value(any::LibTVMFFI.TVMFFIAny, borrowed::Bool)
         # - When it will be freed
         # - Whether it's safe to hold after this call
         #
-        # Scenarios:
-        # 1. Borrowed (callback arg): C owns data, may free after return → MUST copy
-        # 2. Owned (our return): view is local variable, freed after return → MUST copy
-        #
         # For zero-copy, use TVMTensor objects (with refcounting) instead of raw pointers.
-        # But that requires different type_index and C understanding object lifecycle.
-        #
-        # Practical choice: Always copy. Safe and simple. Performance is acceptable
-        # for typical callback data sizes.
         tensor_ptr = reinterpret(Ptr{DLTensor}, any.data)
         tensor_ptr == C_NULL && error("NULL DLTensor pointer in _extract_value")
 
         # SAFETY: Read DLTensor metadata (no pointers escaped yet)
         dltensor = unsafe_load(tensor_ptr)
+
+        # Check device type - GPU tensors cannot be copied with simple memcpy
+        device_type = dltensor.device.device_type
+        if device_type != Int32(LibTVMFFI.kDLCPU)
+            error("GPU DLTensor (device_type=$device_type) in callback requires kTVMFFITensor type " *
+                  "(with reference counting) for proper GPU memory handling. " *
+                  "Raw DLTensorPtr only supports CPU arrays.")
+        end
 
         # Extract shape
         ndim = Int(dltensor.ndim)
@@ -403,9 +438,12 @@ function _extract_value(any::LibTVMFFI.TVMFFIAny, borrowed::Bool)
         handle = reinterpret(LibTVMFFI.TVMFFIObjectHandle, any.data)
         return TVMError(handle; borrowed = borrowed)
     elseif type_idx == Int32(LibTVMFFI.kTVMFFITensor)
-        # Tensor object (with refcounting)
+        # Tensor object (with refcounting) - zero-copy via DLPack
         handle = reinterpret(LibTVMFFI.TVMFFIObjectHandle, any.data)
-        return TVMTensor(handle; borrowed = borrowed)
+        tensor = TVMTensor(handle; borrowed = borrowed)
+        # Convert to Julia array via DLPack (zero-copy)
+        # The array holds a reference to tensor, keeping it alive
+        return from_dlpack(tensor)
     elseif type_idx == Int32(LibTVMFFI.kTVMFFIModule)
         # Module object
         # TVMModule is a thin wrapper around TVMObject

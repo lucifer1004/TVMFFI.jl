@@ -1,8 +1,8 @@
 """
 AMDGPU Extension for TVMFFI.jl
 
-This extension is automatically loaded when AMDGPU.jl is imported.
-It enables zero-copy tensor exchange between Julia ROCArrays and TVM on AMD GPUs.
+This extension enables zero-copy tensor exchange between Julia ROCArrays and TVM
+on AMD GPUs.
 
 # Usage
 ```julia
@@ -12,59 +12,60 @@ using AMDGPU  # Triggers this extension
 arr = AMDGPU.ROCArray(Float32[1, 2, 3])
 tensor = TVMTensor(arr)  # Zero-copy!
 ```
-
-# Design Philosophy (Linus-style)
-- Use type dispatch instead of string matching
-- Direct API calls, no _navigate_to_root_module hacks
-- AMDGPU.jl knows AMDGPU.jl best
 """
 module AMDGPUExt
 
 import TVMFFI
+import TVMFFI: dldevice, _wrap_gpu_dltensor, DLDevice, LibTVMFFI,
+               _register_wrapped_array, _is_contiguous, TVMTensor
 import AMDGPU
-import DLPack
 
 # ============================================================================
-# DLPack Integration (zero-copy tensor exchange)
+# Device Detection
 # ============================================================================
-# Note: Backend detection is handled by DLPack.dldevice - no duplication!
 
-# Extend DLPack.share for ROCArrays
-function DLPack.share(A::AMDGPU.ROCArray)
-    DLPack.unsafe_share(A)
-end
-
-# Handle strided views
-function DLPack.share(A::SubArray{T, N, <:AMDGPU.ROCArray}) where {T, N}
-    DLPack.unsafe_share(A)
-end
-
-# Extend DLPack.dldevice for ROCArrays
-function DLPack.dldevice(x::AMDGPU.ROCArray)
-    # AMDGPU.jl uses 1-indexed device IDs, DLPack uses 0-indexed
+function TVMFFI.dldevice(x::AMDGPU.ROCArray)
     dev_id_1indexed = AMDGPU.device_id(AMDGPU.device(x))
     dev_id_0indexed = dev_id_1indexed - 1
-    return DLPack.DLDevice(DLPack.kDLROCM, Cint(dev_id_0indexed))
+    return DLDevice(Int32(LibTVMFFI.kDLROCM), Int32(dev_id_0indexed))
 end
 
-function DLPack.dldevice(x::SubArray{T, N, <:AMDGPU.ROCArray}) where {T, N}
-    return DLPack.dldevice(parent(x))
+function TVMFFI.dldevice(x::SubArray{T, N, <:AMDGPU.ROCArray}) where {T, N}
+    return TVMFFI.dldevice(parent(x))
 end
 
-# Extend jlarray_type for wrapping DLPack tensors back to ROCArray
-DLPack.jlarray_type(::Val{DLPack.kDLROCM}) = AMDGPU.ROCArray
-DLPack.jlarray_type(::Val{DLPack.kDLROCMHost}) = AMDGPU.ROCArray
+# ============================================================================
+# ROCm Tensor Wrapping (TVM → Julia) - SIMPLIFIED
+# ============================================================================
 
-# Extend unsafe_wrap for ROCArray
-function Base.unsafe_wrap(::Type{<:AMDGPU.ROCArray}, manager::DLPack.DLManager{T}) where {T}
-    if DLPack.device_type(manager) in (DLPack.kDLROCM, DLPack.kDLROCMHost)
-        addr = DLPack.pointer(manager)
-        sz = DLPack.unsafe_size(manager)
-        # AMDGPU uses ROCDeviceArray or similar pointer type
-        return unsafe_wrap(AMDGPU.ROCArray, Ptr{T}(addr), sz)
+const _ROCM = Int32(LibTVMFFI.kDLROCM)
+const _ROCM_HOST = Int32(LibTVMFFI.kDLROCMHost)
+
+function TVMFFI._wrap_gpu_dltensor(::Val{_ROCM}, ::Type{T}, data_ptr::Ptr{Cvoid},
+        shape::Vector{Int64}, strides::Vector{Int64},
+        owner::TVMTensor) where {T}
+    _wrap_rocm_dltensor(T, data_ptr, shape, strides, owner)
+end
+
+function TVMFFI._wrap_gpu_dltensor(::Val{_ROCM_HOST}, ::Type{T}, data_ptr::Ptr{Cvoid},
+        shape::Vector{Int64}, strides::Vector{Int64},
+        owner::TVMTensor) where {T}
+    _wrap_rocm_dltensor(T, data_ptr, shape, strides, owner)
+end
+
+function _wrap_rocm_dltensor(::Type{T}, data_ptr::Ptr{Cvoid}, shape::Vector{Int64},
+        strides::Vector{Int64}, owner::TVMTensor) where {T}
+    if _is_contiguous(shape, strides)
+        roc_ptr = Ptr{T}(UInt(data_ptr))
+        arr = unsafe_wrap(AMDGPU.ROCArray, roc_ptr, Tuple(shape))
+        _register_wrapped_array(arr, owner)
+        return arr
+    else
+        @warn "Non-contiguous ROCm tensor detected, copying data"
+        roc_ptr = Ptr{T}(UInt(data_ptr))
+        src = unsafe_wrap(AMDGPU.ROCArray, roc_ptr, Tuple(shape))
+        return copy(src)
     end
-    throw(ArgumentError("Only ROCm arrays can be wrapped with ROCArray"))
 end
 
 end # module AMDGPUExt
-

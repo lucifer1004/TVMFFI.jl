@@ -90,7 +90,7 @@ println("="^70)
 
 if echo_func !== nothing
     handle = echo_func.handle
-    
+
     show_result("IncRef + DecRef pair", @benchmark begin
         LibTVMFFI.TVMFFIObjectIncRef($handle)
         LibTVMFFI.TVMFFIObjectDecRef($handle)
@@ -151,34 +151,35 @@ println("\n" * "="^70)
 println("Micro-benchmark: Full Function Call Breakdown")
 println("="^70)
 
-register_global_func("julia.micro.identity", (x) -> x; override=true)
+register_global_func("julia.micro.identity", (x) -> x; override = true)
 tvm_identity = get_global_func("julia.micro.identity")
 
 if tvm_identity !== nothing
     println("\nBreakdown of TVM function call with Int64 argument:\n")
-    
+
     # Individual components
     t1 = @benchmark Vector{TVMAny}(undef, 1)
     show_result("1. Allocate args Vector{TVMAny}(1)", t1)
-    
+
     t2 = @benchmark TVMAny(Int64(42))
     show_result("2. TVMAny(Int64)", t2)
-    
+
     test_any = TVMAny(Int64(42))
     t3 = @benchmark raw_data($test_any)
     show_result("3. raw_data(TVMAny)", t3)
-    
+
     t4 = @benchmark Ref{LibTVMFFI.TVMFFIAny}(LibTVMFFI.TVMFFIAny(Int32(0), 0, 0))
     show_result("4. Allocate result Ref", t4)
-    
+
     t_full = @benchmark $tvm_identity(Int64(42))
     show_result("5. Full call (end-to-end)", t_full)
-    
+
     # Calculate percentages
-    ns1, ns2, ns3, ns4 = time(median(t1)), time(median(t2)), time(median(t3)), time(median(t4))
+    ns1, ns2, ns3,
+    ns4 = time(median(t1)), time(median(t2)), time(median(t3)), time(median(t4))
     ns_full = time(median(t_full))
     ns_ccall = max(0, ns_full - ns1 - ns2 - ns3 - ns4)
-    
+
     println("\nOverhead breakdown:")
     @printf("    Args allocation:   %6.1f ns (%4.1f%%)\n", ns1, 100*ns1/ns_full)
     @printf("    Arg conversion:    %6.1f ns (%4.1f%%)\n", ns2, 100*ns2/ns_full)

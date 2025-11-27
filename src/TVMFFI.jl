@@ -78,9 +78,9 @@ export type_index, type_key      # Query type info
 # Version info
 export tvm_ffi_version
 
-# DLPack interop
-using DLPack: from_dlpack
+# DLPack interop (self-contained, no DLPack.jl dependency)
 export from_dlpack               # TVMTensor → Julia Array
+export dldevice                  # Get DLDevice from array
 
 # GPU support
 export supports_gpu_backend
@@ -111,10 +111,10 @@ include("object.jl")
 include("utils.jl")               # Internal utilities (_get_root_array)
 include("tensor.jl")              # Defines DLTensor, TensorView and basic conversions
 include("gpuarrays_support.jl")   # GPU abstraction (extends TensorView constructor)
-include("function.jl")            # Defines TVMFunction
+include("dlpack.jl")              # DLPack zero-copy tensor exchange (defines _WRAPPED_ARRAYS)
+include("function.jl")            # Defines TVMFunction (uses _unregister_wrapped_array)
 include("module.jl")              # Defines TVMModule
 include("conversion.jl")          # ABI boundary - depends on all types above
-include("dlpack.jl")              # DLPack zero-copy tensor exchange
 
 # Module initialization
 function __init__()

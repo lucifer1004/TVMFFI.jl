@@ -157,11 +157,12 @@ FFI overhead has been carefully measured using [BenchmarkTools.jl](https://githu
 | TensorView creation | 27 ns | 25x | 5 (208 B) |
 | IncRef + DecRef | 6 ns | 5x | 0 |
 | Dict lookup (callback) | 13 ns | 12x | 0 |
-| **TVM func() empty** | **209 ns** | **190x** | 5 (160 B) |
-| **TVM func(Int64)** | **272 ns** | **250x** | 10 (336 B) |
-| TVM func(Array[64]) | 3.1 μs | 2800x | 62 (2.7 KB) |
-| TVM func(TensorView[64]) | 3.0 μs | 2750x | 57 (2.5 KB) |
-| TVM func(Array[4096]) | 19 μs | 17000x | 66 (35 KB) |
+| **TVM func() empty** | **265 ns** | **240x** | 5 (160 B) |
+| **TVM func(Int64)** | **320 ns** | **290x** | 10 (336 B) |
+| TVM func(Array[64]) identity | 660 ns | 600x | 24 (1.1 KB) |
+| TVM func(Array[4096]) identity | 660 ns | 600x | 25 (1.1 KB) |
+
+**Note**: Array identity calls are **O(1)** thanks to zero-copy optimization - overhead is constant regardless of array size.
 
 ### Overhead Breakdown
 
@@ -193,6 +194,30 @@ julia --project=. -e 'using Pkg; Pkg.develop(path=".."); Pkg.instantiate()'
 julia --project=. ffi_overhead.jl
 julia --project=. microbenchmarks.jl
 ```
+
+### Known Limitation: GPU Benchmarking with BenchmarkTools
+
+**`@benchmark` cannot be used with functions returning new GPU arrays** - it will segfault.
+
+```julia
+# ❌ CRASHES: BenchmarkTools' internal loop discards return values
+@benchmark my_gpu_func($arr)
+
+# ❌ STILL CRASHES: @benchmark only saves first iteration's result
+local result
+@benchmark result = my_gpu_func($arr)
+
+# ✅ WORKS: Manual timing with explicit result retention
+local result
+for _ in 1:N
+    result = my_gpu_func(arr)  # Each result kept alive until next iteration
+    CUDA.synchronize()
+end
+```
+
+**Root cause**: BenchmarkTools' generated code only saves the first iteration's return value. Subsequent iterations in the internal loop discard results, then `gcscrub()` triggers GC which crashes in CUDA.jl finalizers.
+
+This is a known Julia ecosystem issue. For GPU benchmarks, use manual timing or `CUDA.@time`. See [CUDA.jl profiling docs](https://cuda.juliagpu.org/stable/development/profiling/).
 
 ## Architecture
 

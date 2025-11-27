@@ -1,98 +1,81 @@
 # Agent Guide: TVMFFI.jl
 
-This document outlines the workflow and goals for working on the `TVMFFI.jl` Julia package.
+本文档为 AI Agent 和开发者提供 TVMFFI.jl 项目的技术指南。
 
-## Version Control: Jujutsu (`jj`)
+## 快速入门
 
-This repository uses **Jujutsu (jj)** for version control. Do **NOT** use standard `git` commands for creating commits or branches.
+### 版本控制：Jujutsu (`jj`)
 
-### Common Commands
--   **Start work**: `jj new` (creates a new anonymous change on top of the current one).
--   **Save progress**: `jj describe -m "Description of changes"` (gives the current change a commit message).
--   **View status**: `jj st` (shows the current working copy status and parent chain).
--   **View log**: `jj log` (shows the commit graph).
--   **Push**: `jj git push` (pushes changes to the remote).
+本仓库使用 **Jujutsu (jj)** 而非 git。
 
-**Important**: You are always in a "working copy" commit. You don't need to "stage" files. Just modify them and `jj describe` to name the commit.
+```bash
+jj new                      # 创建新变更
+jj describe -m "message"    # 添加提交信息
+jj st                       # 查看状态
+jj log                      # 查看历史
+jj git push                 # 推送到远程
+```
 
-## Development Workflow
+### 开发环境
 
-### Environment
--   Activate the environment: `julia --project=.`
--   Instantiate dependencies: `using Pkg; Pkg.instantiate()`
+```bash
+julia --project=.           # 激活环境
+```
 
-### Testing
--   Run tests: `using Pkg; Pkg.test()`
--   Run specific test file: `include("test/runtests.jl")` or specific files in `test/`.
-
-### Code Style
--   This project uses `.JuliaFormatter.toml`.
--   Format code: `using JuliaFormatter; format(".")`
-
-## Roadmap & Tasks
-
-The immediate goal is to reach feature parity with Python/Rust bindings. See `../STATUS.md` for a detailed matrix.
-
-### Priority 1: Function Registration ✅ COMPLETE
-We need to allow Julia functions to be called by TVM.
-1.  ✅ **`CallbackFunctionObjImpl`**: Implemented via `safe_call` C callback with Julia function registry.
-2.  ✅ **`register_global_func`**: Fully functional API that registers Julia functions into TVM global registry.
-3.  ✅ **Argument Conversion**: `to_tvm_any`, `take_value`, and `copy_value` work for all major types (int, float, bool, string, objects).
-4.  ✅ **Exception Handling**: Julia exceptions are properly caught and translated to TVM errors.
-
-### Priority 2: Object Registration ✅ COMPLETE
-Allow defining custom TVM objects in Julia.
-1.  ✅ **Basic `register_object` function**: Implemented. Can register type keys and allocate type indices.
-2.  ✅ **Type queries**: `get_type_index` and `type_index`/`type_key` for looking up registered types.
-3.  ✅ **`@register_object` Macro**: Generates struct with handle, finalizer, reflection-based property access.
-4.  ✅ **Reflection API**: `get_type_info`, `get_fields`, `get_methods` for introspection.
-5.  ✅ **Field Access**: `getproperty`/`setproperty!` via reflection getters/setters.
-6.  ✅ **Constructor**: `TypeName(args...)` syntax via `__ffi_init__` method.
-
-### Priority 3: System Library ✅ COMPLETE
-1.  ✅ **`system_lib()`**: Access statically linked TVM modules.
-2.  ✅ **Module introspection**: `inspect_source()`, `get_module_kind()`.
-3.  ✅ **Module export**: `write_to_file()` for saving compiled modules.
-4.  ✅ **Function checking**: `implements_function()` to verify function availability.
-
-### Priority 4: Documentation ✅ COMPLETE
-1.  ✅ **Basic Structure**: `index.md` and `api.md` created.
-2.  ✅ **API Reference**: Comprehensive docstrings for exported types and functions.
-3.  ✅ **Examples**: Practical examples in `README.md` and `examples/` directory.
-
-## Directory Structure
--   `src/LibTVMFFI.jl`: Low-level C bindings (generated/maintained manually).
--   `src/TVMFFI.jl`: Main entry point.
--   `src/any.jl`: TVMAny/TVMAnyView ownership-aware containers.
--   `src/conversion.jl`: ABI boundary layer (to_tvm_any, take_value, copy_value).
--   `src/function.jl`: Function wrappers.
--   `src/object.jl`: Object wrappers. **Focus here for Priority 2.**
--   `src/dlpack.jl`: DLPack zero-copy tensor exchange (TVMTensor, from_dlpack).
--   `src/gpuarrays_support.jl`: GPU array integration via DLPack.jl's type dispatch.
--   `ext/CUDAExt.jl`: Placeholder (DLPack.jl provides CUDA support).
--   `ext/AMDGPUExt.jl`: AMD ROCm support (DLPack.share, dldevice for ROCArray).
--   `ext/MetalExt.jl`: Apple Metal support (DLPack.share, dldevice for MtlArray).
--   `docs/`: Documentation source and build scripts.
+```julia
+using Pkg; Pkg.instantiate()  # 安装依赖
+using Pkg; Pkg.test()         # 运行测试
+using JuliaFormatter; format(".")  # 格式化代码
+```
 
 ---
 
-## Memory Safety Guidelines
+## 项目架构
 
-### Critical Rules for C FFI Code
+### 目录结构
 
-When working with C API bindings, **ALWAYS** follow these rules:
+```
+src/
+├── LibTVMFFI.jl       # C API 绑定（底层）
+├── TVMFFI.jl          # 主入口
+├── any.jl             # TVMAny/TVMAnyView 所有权容器
+├── conversion.jl      # ABI 边界层（to_tvm_any, take_value, copy_value）
+├── function.jl        # 函数包装器
+├── object.jl          # 对象包装器
+├── tensor.jl          # TensorView 实现
+├── dlpack.jl          # DLPack 零拷贝交换
+└── gpuarrays_support.jl  # GPU 数组支持
 
-#### 1. GC Safety: Use `GC.@preserve` for ALL Pointer Passing
+ext/
+├── CUDAExt.jl         # 占位符（DLPack.jl 提供 CUDA 支持）
+├── AMDGPUExt.jl       # AMD ROCm 支持
+└── MetalExt.jl        # Apple Metal 支持
+```
 
-**Rule**: Any time you extract a pointer from a Julia object and pass it to C, you **MUST** use `GC.@preserve`.
+### 核心类型
+
+| 类型 | 用途 | type_index |
+|------|------|------------|
+| `TVMObject` | 通用 TVM 对象包装 | 变化 |
+| `TVMFunction` | 可调用函数 | 16 |
+| `TVMTensor` | 引用计数张量 | 70 |
+| `TensorView` | 轻量指针视图 | 7 |
+| `TVMAny` | 拥有所有权的值容器 | - |
+| `TVMAnyView` | 借用的值视图 | - |
+
+---
+
+## 内存安全规范
+
+### 1. GC 安全：指针传递必须用 `GC.@preserve`
 
 ```julia
-# ❌ WRONG - GC can collect str during C call
+# ❌ 错误 - GC 可能在 C 调用期间回收 str
 str = "hello"
 byte_array = LibTVMFFI.TVMFFIByteArray(pointer(str), sizeof(str))
-ret = some_c_function(byte_array)  # CRASH!
+ret = some_c_function(byte_array)  # 崩溃！
 
-# ✅ CORRECT
+# ✅ 正确
 str = "hello"
 GC.@preserve str begin
     byte_array = LibTVMFFI.TVMFFIByteArray(
@@ -102,507 +85,170 @@ GC.@preserve str begin
 end
 ```
 
-**Why**: Julia's GC can run at any time, even during C calls. Without `@preserve`, the string/array may be freed while C is reading it → segfault.
+**注意**：`GC.@preserve obj.field` 无效，必须先提取到局部变量。
 
-**Watch out for**:
-- String → `TVMFFIByteArray` conversions
-- Array → pointer conversions  
-- Field access: `GC.@preserve obj.field` ❌ → Extract to local first: `x = obj.field; GC.@preserve x` ✅
+### 2. 引用计数：所有权模型
 
-#### 2. Reference Counting: Understand Ownership
+**黄金法则**：每个 `IncRef` 必须有匹配的 `DecRef`。
 
-**The Golden Rule**: Every `IncRef` must have a matching `DecRef`.
-
-**Ownership Model**:
 ```julia
-# Scenario 1: Taking ownership (C gives us a reference)
-function from_c_api_returns_new_ref(any::TVMFFIAny)
-    handle = reinterpret(TVMFFIObjectHandle, any.data)
-    return TVMObject(handle; own=false)  # Don't IncRef, we already own it
-    # Finalizer will DecRef → balanced
-end
+# 场景 1：接管所有权（C 返回新引用）
+TVMObject(handle; borrowed=false)  # 不 IncRef，finalizer 会 DecRef
 
-# Scenario 2: Borrowing (C lends us a reference)
-function from_c_api_borrowed_ref(any::TVMFFIAny)
-    handle = reinterpret(TVMFFIObjectHandle, any.data)
-    return TVMObject(handle; own=true)   # IncRef to copy reference
-    # Finalizer will DecRef → C's reference untouched
-end
-
-# Scenario 3: Passing to C (we create a temporary reference)
-function pass_to_c(obj::TVMObject)
-    LibTVMFFI.TVMFFIObjectIncRef(obj.handle)  # +1 for C
-    result = some_c_function(obj.handle)
-    LibTVMFFI.TVMFFIObjectDecRef(obj.handle)  # -1 cleanup
-    return result
-end
+# 场景 2：借用（C 借给我们）
+TVMObject(handle; borrowed=true)   # IncRef，finalizer 会 DecRef
 ```
 
-**Quick Reference**:
-- `borrowed=true`: IncRef immediately, DecRef in finalizer (copy reference)
-- `borrowed=false`: Don't IncRef, DecRef in finalizer (take ownership)
+**C API 返回语义**：
 
-> **Design Decision (2025-11-26)**: The `borrowed` parameter has NO DEFAULT VALUE.
-> This is intentional - forces explicit semantics at every call site, preventing misuse.
-> These constructors are internal API; users should not call them directly.
+| C API 函数 | 返回类型 | Julia `borrowed` |
+|------------|----------|------------------|
+| `TVMFFIFunctionGetGlobal` | 新引用 | `false` |
+| `TVMFFIFunctionCall` 结果 | 新引用 | `false` |
+| 回调参数 | 借用 | `true` |
 
-#### 3. Cross-Language Verified Reference Semantics
+> **设计决策**：`borrowed` 参数**无默认值**。强制显式指定语义，防止误用。
 
-> **Audit Date**: 2025-11-26
-> **Verified Against**: C++ (`object.h`, `function.h`), Python (`object.pxi`, `function.pxi`), Rust (`object.rs`, `any.rs`, `function.rs`)
-
-**C API Return Semantics** (when Julia receives from C):
-
-| C API Function | Returns | Julia `borrowed` | Rationale |
-|----------------|---------|------------------|-----------|
-| `TVMFFIFunctionGetGlobal` | New reference | `false` | Caller owns, don't IncRef |
-| `TVMFFIFunctionCall` result | New reference | `false` | Caller owns the result |
-| `TVMFFIErrorMoveFromRaised` | Moved ownership | `false` | "Move" = take ownership |
-| `TVMFFIStringFromByteArray` | New reference | N/A | Direct use, finalizer handles |
-| `TVMFFIBytesFromByteArray` | New reference | N/A | Direct use, finalizer handles |
-| Callback arguments | Borrowed | `true` | Must IncRef to keep alive |
-
-**Julia → C Passing Pattern**:
+### 3. TVMAny / TVMAnyView 类型系统
 
 ```julia
-# When passing TVMObject/TVMFunction to C API:
-function (func::TVMFunction)(args...)
-    # 1. IncRef before passing (to_tvm_any does this)
-    args_array[i] = to_tvm_any(arg)  # IncRef inside
-    
-    # 2. Call C API
-    ret = LibTVMFFI.TVMFFIFunctionCall(...)
-    
-    # 3. DecRef after call (cleanup)
-    for arg_any in args_array
-        if is_object(arg_any)
-            LibTVMFFI.TVMFFIObjectDecRef(obj_ptr)
-        end
-    end
-end
-```
-
-**Cross-Language Equivalents**:
-
-| Julia | C++ | Rust | Python |
-|-------|-----|------|--------|
-| `TVMObject(h; borrowed=false)` | `ObjectPtrFromOwned(h)` | `ObjectArc::from_raw(h)` | Direct assign to `.chandle` |
-| `TVMObject(h; borrowed=true)` | `ObjectPtrFromUnowned(h)` | Clone after `from_raw` | `TVMFFIAnyViewToOwnedAny` |
-| `take_value(TVMAny(raw))` | Return from function | `Any::from_raw_ffi_any` | `make_ret(result)` |
-| `copy_value(TVMAnyView(raw))` | Callback arg handling | `T::copy_from_any_view` | `TVMFFIAnyViewToOwnedAny` |
-
-#### 3.1 TVMAny/TVMAnyView Type System (NEW)
-
-> **Added**: 2025-11-26
-> **Inspired by**: Rust's `Any` and `AnyView<'a>` types
-
-Julia now has ownership-aware value containers that make reference semantics explicit at the type level:
-
-```julia
-# TVMAnyView - Borrowed view (no lifetime management)
-# Use for callback arguments, temporary access
+# TVMAnyView - 借用视图（回调参数用）
 view = TVMAnyView(raw_any)
-value = copy_value(view)  # Copies reference (IncRef for objects)
+value = copy_value(view)  # 复制引用（对象会 IncRef）
 
-# TVMAny - Owned value (manages reference count)
-# Use for function returns, storing values
+# TVMAny - 拥有所有权（函数返回用）
 owned = TVMAny(raw_any)
-value = take_value(owned)  # Takes ownership, invalidates `owned`
-
-# Convert view to owned (uses TVMFFIAnyViewToOwnedAny C API)
-owned = TVMAny(view)
+value = take_value(owned)  # 取走所有权，owned 失效
 ```
 
-**Key Design Decisions**:
+### 4. 代码审查清单
 
-1. **`take_value` invalidates `TVMAny`**: After `take_value(any)`, the TVMAny's data is cleared to prevent double-free. The returned wrapper takes over reference management.
-
-2. **`copy_value` is always safe**: Uses `TVMFFIAnyViewToOwnedAny` C API to properly handle all type conversions (objects, raw strings, byte arrays, rvalue refs). Original view remains valid.
-
-**Usage in function.jl**:
-
-```julia
-# Callback arguments - use TVMAnyView + copy_value
-view = TVMAnyView(unsafe_load(arg_ptr))
-julia_args[i] = copy_value(view)
-
-# Function returns - use TVMAny + take_value
-result_owned = TVMAny(result[])
-julia_result = take_value(result_owned)
-```
-
-#### 4. Common Pitfalls
-
-| Mistake | Impact | How to Avoid |
-|---------|--------|--------------|
-| Missing `GC.@preserve` | Segfault, data corruption | Always wrap `pointer()` → C calls |
-| Wrong `borrowed` parameter | Double-free, use-after-free | Check if C API returns new ref or borrows |
-| Forgetting `DecRef` | Memory leak | Every `IncRef` needs matching `DecRef` |
-| Preserving fields directly | Syntax error | Extract to local: `x = obj.field` |
-
-#### 5. Code Review Checklist
-
-Before committing C FFI code, verify:
-
-- [ ] Every `pointer(x)` is inside `GC.@preserve x`
-- [ ] Every `TVMFFIByteArray` construction preserves the source data
-- [ ] Every `IncRef` has a corresponding `DecRef`
-- [ ] `borrowed` parameter matches reference source (new ref vs borrowed ref)
-- [ ] Finalizers are registered for all heap objects
-- [ ] NULL pointer checks before dereferencing
-
-#### 6. Testing for Memory Safety
-
-Add tests that stress memory management:
-
-```julia
-@testset "Memory Safety" begin
-    # Force GC between operations
-    for i in 1:1000
-        result = some_function(data)
-        GC.gc()  # Try to trigger use-after-free bugs
-        @test result == expected
-    end
-    
-    # Test with exception paths
-    @test_throws TVMError error_function()
-    GC.gc()  # Ensure error cleanup is correct
-end
-```
+- [ ] 每个 `pointer(x)` 都在 `GC.@preserve x` 内
+- [ ] 每个 `TVMFFIByteArray` 构造都保护了源数据
+- [ ] 每个 `IncRef` 有对应的 `DecRef`
+- [ ] `borrowed` 参数与引用来源匹配
+- [ ] 所有堆对象都注册了 finalizer
 
 ---
 
-## Design Principles (Linus Style)
+## DLPack 张量交换
 
-### 1. Good Taste - Eliminate Special Cases
-
-Use existing abstractions instead of reimplementing:
+### API
 
 ```julia
-# ❌ BAD: String matching and module navigation hacks
+# Julia → TVM（零拷贝）
+arr = rand(Float32, 3, 4)
+tensor = TVMTensor(arr)
+
+# TVM → Julia（零拷贝）
+arr2 = from_dlpack(tensor)
+
+# 轻量视图（需要手动管理生命周期）
+view = TensorView(arr)
+GC.@preserve arr begin
+    tvm_func(view)
+end
+```
+
+### 类型对比
+
+| 类型 | type_index | 引用计数 | 适用场景 |
+|------|------------|----------|----------|
+| `TVMTensor` | 70 | ✅ 有 | GPU 数组，跨边界传递 |
+| `TensorView` | 7 | ❌ 无 | CPU 数组，短期使用 |
+
+### GPU 支持
+
+| 后端 | 扩展 | 数组类型 |
+|------|------|----------|
+| NVIDIA CUDA | DLPack.jl/CUDAExt | CuArray |
+| Apple Metal | TVMFFI/MetalExt | MtlArray |
+| AMD ROCm | TVMFFI/AMDGPUExt | ROCArray |
+
+---
+
+## 已知限制
+
+### 1. BenchmarkTools + GPU 数组
+
+**问题**：`@benchmark` 会在迭代间调用 `GC.gc()`，导致返回的 GPU 数组被回收时触发段错误。
+
+```julia
+# ❌ 崩溃
+@benchmark my_gpu_func($arr)
+
+# ✅ 使用手动计时
+n = 10000
+t_start = time_ns()
+for _ in 1:n
+    func(arr)
+end
+CUDA.synchronize()
+t_avg = (time_ns() - t_start) / n
+```
+
+**原因**：BenchmarkTools 的 `gcscrub()` 与 CUDA.jl finalizer 的交互问题，非 TVMFFI bug。
+
+### 2. GPU 数组开销
+
+GPU 数组通过 `kTVMFFITensor`（type_index=70）传递，有完整引用计数开销：
+
+- CPU 数组 identity：~600 ns
+- GPU 数组 identity：~14-26 μs
+
+对于计算密集操作，此开销可忽略。
+
+---
+
+## 设计原则
+
+### 1. 消除特殊情况
+
+```julia
+# ❌ 字符串匹配和模块导航 hack
 function detect_backend(arr)
     type_name = string(typeof(arr).name.name)
     if occursin("Cu", type_name)
-        cuda_module = _navigate_to_root_module(arr, :CUDA)  # Ugly!
-        return (:CUDA, cuda_module.deviceid(...))
-    elseif occursin("ROC", type_name)
         ...
     end
 end
 
-# ✅ GOOD: Use DLPack.jl's type dispatch
+# ✅ 使用 DLPack.jl 的类型派发
 function _dlpack_to_tvm_device(arr)
-    dlpack_dev = DLPack.dldevice(arr)  # DLPack handles everything!
+    dlpack_dev = DLPack.dldevice(arr)  # DLPack 处理一切
     return DLDevice(Int32(dlpack_dev.device_type), Int32(dlpack_dev.device_id))
 end
 ```
 
-The refactored code deleted 120 lines and added 40 - a 60% reduction by using proper abstractions.
-
-### 2. Simplicity - Direct Mapping
+### 2. 直接映射
 
 ```julia
-# Struct layout must match C exactly
+# Julia struct 布局必须精确匹配 C
 struct TVMFFIObject
-    combined_ref_count::UInt64  # Match C layout
+    combined_ref_count::UInt64
     type_index::Int32
     __padding::UInt32
     deleter::Ptr{Cvoid}
 end
 ```
 
-No intermediate wrappers. One Julia struct = One C struct.
+### 3. 实用主义
 
-### 3. Practical - Solve Real Problems
-
-- If C API doesn't support it, don't hack around it
-- If existing code works, verify and document it (don't rewrite)
-- Defer advanced features until they're actually needed
+- C API 不支持的功能，不要 hack
+- 现有代码能工作，验证并文档化（不要重写）
+- 推迟高级功能直到真正需要
 
 ---
 
-## Future Design: GC Pooling for Julia Object Exposure
+## 未来工作（可选）
 
-> Reference: MWORKS.Syslab团队的GC Pooling技术（同元软控）
+### GC Pooling
 
-### Problem Statement
+当前使用 `Dict{Ptr{Cvoid}, Any}` 作为回调注册表。如果以下场景出现性能瓶颈，考虑实现 slot pool：
 
-When exposing Julia objects to external languages (like TVM/C++), we face a challenge:
-- Julia GC may collect objects that are still referenced by the external language
-- External language has no way to participate in Julia's GC
+- 大量短生命周期回调
+- 高频函数注册/注销
 
-### Current Implementation
+核心思路：用 `Vector{Any}` + freelist 替代 Dict，暴露整数索引而非指针。
 
-`function.jl` uses a simple registry approach:
-
-```julia
-const _callback_registry = Dict{Ptr{Cvoid}, Any}()
-
-function register_global_func(name, func)
-    func_ref = Ref{Any}(func)
-    resource_handle = Base.unsafe_convert(Ptr{Cvoid}, func_ref)
-    _callback_registry[resource_handle] = func_ref  # Keep alive
-    # ... register with TVM ...
-end
-
-function callback_deleter(resource_handle)
-    delete!(_callback_registry, resource_handle)  # Allow GC
-end
-```
-
-**Limitations**:
-- Dict uses pointer as key → hash overhead
-- No slot reuse after deletion → memory fragmentation
-- Pointer debugging is harder than integer indices
-
-### GC Pooling Pattern
-
-Core idea: Use a **slot pool** as GC root, expose **integer indices** instead of pointers.
-
-```julia
-# Object pool as GC root
-const JULIA_OBJECT_POOL = Vector{Any}(undef, 1024)
-const POOL_FREELIST = Vector{Int}()
-const POOL_LOCK = ReentrantLock()
-
-function pool_insert(obj)::Int
-    lock(POOL_LOCK) do
-        idx = if isempty(POOL_FREELIST)
-            push!(JULIA_OBJECT_POOL, obj)
-            length(JULIA_OBJECT_POOL)
-        else
-            pop!(POOL_FREELIST)
-            JULIA_OBJECT_POOL[idx] = obj
-            idx
-        end
-        return idx
-    end
-end
-
-function pool_get(idx::Int)
-    @inbounds JULIA_OBJECT_POOL[idx]
-end
-
-function pool_release(idx::Int)
-    lock(POOL_LOCK) do
-        JULIA_OBJECT_POOL[idx] = nothing  # Allow GC
-        push!(POOL_FREELIST, idx)
-    end
-end
-```
-
-**Benefits**:
-- O(1) slot reuse via freelist
-- Integer indices are easier to debug
-- No hash computation
-- Compact memory layout
-
-### When to Implement
-
-**Do NOT implement now** - current `_callback_registry` works fine for:
-- Global function registration (infrequent)
-- Long-lived callbacks
-
-**Implement when**:
-1. **`@register_object` macro** (Priority 2) - Julia objects exposed as TVM objects need lifecycle management
-2. **Callback returns Julia arrays** - If TVM needs to hold array references beyond callback scope
-3. **Performance issues** - If profiling shows registry operations as bottleneck
-
-### Integration Points
-
-When implementing, modify:
-1. `src/function.jl`: Replace `_callback_registry` Dict with pool
-2. `src/object.jl`: Use pool for `@register_object` macro
-3. C callbacks: Pass slot index instead of pointer
-
----
-
-## DLPack Zero-Copy Tensor Exchange ✅ IMPLEMENTED
-
-> **Implementation Date**: 2025-11-26
-> **Status**: COMPLETE
-> **Reference**: [DLPack.jl](https://github.com/p-zubieta/DLPack.jl)
-
-### Problem Statement
-
-Current `TensorView` uses `kTVMFFIDLTensorPtr` (type_index=7) which is just a raw pointer:
-- **No ownership information** - TVM doesn't know when Julia will free the data
-- **Must copy on receive** - Julia doesn't know when TVM will free the data
-- **GC.@preserve required** - Manual lifetime management is error-prone
-
-### Solution: Use `kTVMFFITensor` with DLPack Protocol
-
-Replace raw `DLTensorPtr` with managed `TVMTensor` objects (type_index=70) that have:
-- Reference counting for safe lifecycle management
-- DLPack protocol for zero-copy data exchange
-
-### Implementation Plan
-
-#### Phase 1: Add DLPack.jl Dependency
-
-```toml
-# TVMFFI/Project.toml
-[deps]
-DLPack = "d1985e75-91ee-4ca6-9615-d8afb9e46da7"
-```
-
-#### Phase 2: Bind C API Functions
-
-```julia
-# LibTVMFFI.jl additions:
-
-# Julia Array → TVMTensor (via DLPack)
-function TVMFFITensorFromDLPackVersioned(
-    from::Ptr{DLManagedTensorVersioned},
-    require_alignment::Int32,
-    require_contiguous::Int32
-)
-    out = Ref{TVMFFIObjectHandle}(C_NULL)
-    ret = ccall(
-        (:TVMFFITensorFromDLPackVersioned, libtvm_ffi),
-        Cint,
-        (Ptr{Cvoid}, Int32, Int32, Ptr{TVMFFIObjectHandle}),
-        from, require_alignment, require_contiguous, out
-    )
-    return ret, out[]
-end
-
-# TVMTensor → Julia Array (via DLPack)
-function TVMFFITensorToDLPackVersioned(from::TVMFFIObjectHandle)
-    out = Ref{Ptr{Cvoid}}(C_NULL)
-    ret = ccall(
-        (:TVMFFITensorToDLPackVersioned, libtvm_ffi),
-        Cint,
-        (TVMFFIObjectHandle, Ptr{Ptr{Cvoid}}),
-        from, out
-    )
-    return ret, out[]
-end
-```
-
-#### Phase 3: Implement Conversions ✅
-
-```julia
-# src/dlpack.jl - IMPLEMENTED
-
-import DLPack: from_dlpack
-
-"""
-    TVMTensor(arr::StridedArray) -> TVMTensor
-
-Convert Julia array to TVMTensor via DLPack protocol (zero-copy).
-The returned TVMTensor holds a reference to the Julia array.
-"""
-function TVMTensor(arr::StridedArray)
-    capsule = DLPack.share(arr)
-    # ... setup deleter and pool ...
-    ret, handle = LibTVMFFI.TVMFFITensorFromDLPack(...)
-    return TVMTensor(handle; borrowed=false)
-end
-
-"""
-    from_dlpack(tensor::TVMTensor) -> AbstractArray
-
-Convert TVMTensor to Julia array via DLPack protocol (zero-copy).
-Returns Array for CPU, CuArray for CUDA (when CUDA.jl loaded).
-"""
-function DLPack.from_dlpack(tensor::TVMTensor)
-    ret, dlpack_ptr = LibTVMFFI.TVMFFITensorToDLPack(tensor.handle)
-    managed = DLPack.DLManagedTensor(Ptr{DLPack.DLManagedTensor}(dlpack_ptr))
-    return Base.unsafe_wrap(managed, tensor)
-end
-```
-
-### Type Mapping
-
-| Scenario | API | Result |
-|----------|-----|--------|
-| Julia → TVM | `TVMTensor(arr)` | `kTVMFFITensor` (refcounted) |
-| TVM → Julia | `from_dlpack(tensor)` | `Array` / `CuArray` (zero-copy) |
-| Manual control | `TensorView(arr)` | `kTVMFFIDLTensorPtr` (no refcount) |
-
-### API Usage
-
-```julia
-using TVMFFI
-using DLPack: from_dlpack
-
-# Recommended usage (zero-copy, safe)
-arr = rand(Float32, 3, 4)
-tensor = TVMTensor(arr)        # Julia → TVM
-arr2 = from_dlpack(tensor)     # TVM → Julia
-
-# Verify zero-copy
-arr[1] = 99.0f0
-@assert 99.0f0 in arr2         # Same memory!
-
-# High-performance usage (manual lifetime)
-view = TensorView(arr)
-GC.@preserve arr begin
-    tvm_func(view)  # Direct DLTensorPtr, no refcount overhead
-end
-```
-
-### Benefits
-
-1. **Zero-copy** - No data copying in either direction
-2. **Safe** - Reference counting manages lifecycle
-3. **Standard API** - `from_dlpack` matches NumPy/PyTorch/JAX naming
-4. **GPU support** - Automatic CuArray/MtlArray/ROCArray via extensions
-5. **Backward compatible** - `TensorView` still available for performance
-
-### GPU Support via Package Extensions
-
-> **Updated**: 2025-11-26
-> **Design**: Use DLPack.jl's type dispatch - no code duplication!
-
-GPU support leverages Julia 1.9+ package extensions and **DLPack.jl**:
-
-```
-ext/
-├── CUDAExt.jl    # Placeholder - DLPack.jl provides CUDA support
-├── MetalExt.jl   # Loaded when Metal.jl is imported (TVMFFI provides)
-└── AMDGPUExt.jl  # Loaded when AMDGPU.jl is imported (TVMFFI provides)
-```
-
-**Architecture (Linus-style: no duplication)**:
-
-| Backend | DLPack Integration | Provider |
-|---------|-------------------|----------|
-| NVIDIA CUDA | `DLPack.dldevice`, `DLPack.share` | **DLPack.jl's CUDAExt** |
-| Apple Metal | `DLPack.dldevice`, `DLPack.share` | **TVMFFI's MetalExt** |
-| AMD ROCm | `DLPack.dldevice`, `DLPack.share` | **TVMFFI's AMDGPUExt** |
-
-**Key Insight**: Device detection uses `DLPack.dldevice()` directly:
-
-```julia
-# gpuarrays_support.jl - Clean and simple!
-function _dlpack_to_tvm_device(arr)
-    dlpack_dev = DLPack.dldevice(arr)  # DLPack handles type dispatch
-    return DLDevice(Int32(dlpack_dev.device_type), Int32(dlpack_dev.device_id))
-end
-```
-
-**Deleted Code** (was redundant):
-- `detect_backend()` - DLPack.dldevice() does this
-- `gpu_backend_to_dldevice()` - unnecessary conversion
-- `_navigate_to_root_module()` - ugly hack, no longer needed
-- `_extract_cuda_device_id()` etc. - DLPack handles this
-
-**Usage**:
-```julia
-using TVMFFI
-using CUDA  # Triggers DLPack.jl's CUDAExt automatically!
-
-# Now TVMTensor works with CuArrays
-cu_arr = CUDA.rand(Float32, 3, 4)
-tensor = TVMTensor(cu_arr)  # Zero-copy!
-arr = from_dlpack(tensor)   # → CuArray
-```
-
-**Supported GPU backends**:
-| Backend | Extension | Array Type | DLDevice |
-|---------|-----------|------------|----------|
-| NVIDIA | DLPack.jl/CUDAExt | CuArray | kDLCUDA |
-| Apple | TVMFFI/MetalExt | MtlArray | kDLMetal |
-| AMD | TVMFFI/AMDGPUExt | ROCArray | kDLROCM |
+**当前状态**：不需要实现。现有实现对全局函数注册足够高效。

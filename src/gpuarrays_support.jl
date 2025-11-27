@@ -20,18 +20,18 @@ under the License.
 """
 Hardware-Agnostic GPU Support
 
-Supports multiple GPU backends through DLPack.jl's type dispatch:
+Supports multiple GPU backends via package extensions:
 - CUDA.jl (NVIDIA)
 - AMDGPU.jl (AMD ROCm)
 - Metal.jl (Apple)
 - oneAPI.jl (Intel)
 
-No dependency on GPUArrays.jl - works directly with each backend.
+No dependency on GPUArrays.jl or DLPack.jl - self-contained implementation.
 
-# Design Philosophy (Linus-style)
-- Use DLPack.dldevice() for device detection - no duplication!
-- DLPack.jl already handles type dispatch for each GPU backend
-- We just convert DLPack.DLDevice to our LibTVMFFI.DLDevice
+# Design Philosophy
+- Default `dldevice(arr)` returns CPU device
+- GPU extensions override `dldevice` for their array types
+- Type dispatch via Julia's multiple dispatch
 
 # Usage
 
@@ -50,30 +50,28 @@ tvm_func(x_view, y_view)
 ```
 """
 
-import DLPack
+using .LibTVMFFI
 
 # ============================================================================
-# DLDevice Conversion
+# Device Detection API
 # ============================================================================
 
 """
-    _dlpack_to_tvm_device(arr) -> DLDevice
+    dldevice(arr) -> DLDevice
 
-Get device info from array using DLPack.dldevice and convert to TVMFFI's DLDevice.
+Get the DLPack device for an array.
 
-Design Philosophy (Linus-style):
-- DLPack.dldevice() already does the heavy lifting via type dispatch
-- We just need to convert DLPack.DLDevice → LibTVMFFI.DLDevice
-- No duplication of backend detection logic!
+Default implementation returns CPU device. GPU extensions override this
+for their specific array types (CuArray, MtlArray, ROCArray, etc.).
+
+# Returns
+- `DLDevice(kDLCPU, 0)` for CPU arrays (default)
+- `DLDevice(kDLCUDA, device_id)` for CUDA arrays
+- `DLDevice(kDLMetal, device_id)` for Metal arrays
+- `DLDevice(kDLROCM, device_id)` for ROCm arrays
 """
-function _dlpack_to_tvm_device(arr)
-    # DLPack.dldevice handles all the type dispatch magic
-    # Returns DLPack.DLDevice(device_type::DLDeviceType, device_id::Cint)
-    dlpack_dev = DLPack.dldevice(arr)
-    
-    # Convert to TVMFFI's DLDevice (same memory layout, different type)
-    return DLDevice(Int32(dlpack_dev.device_type), Int32(dlpack_dev.device_id))
-end
+dldevice(::AbstractArray) = DLDevice(Int32(LibTVMFFI.kDLCPU), Int32(0))
+dldevice(::StridedArray) = DLDevice(Int32(LibTVMFFI.kDLCPU), Int32(0))
 
 """
     _dldevice_type_to_symbol(device_type) -> Symbol
@@ -82,29 +80,28 @@ Convert DLDeviceType to a human-readable symbol for printing.
 """
 function _dldevice_type_to_symbol(device_type::Integer)
     type_map = Dict(
-        Int32(DLPack.kDLCPU) => :CPU,
-        Int32(DLPack.kDLCUDA) => :CUDA,
-        Int32(DLPack.kDLCUDAHost) => :CUDAHost,
-        Int32(DLPack.kDLCUDAManaged) => :CUDAManaged,
-        Int32(DLPack.kDLROCM) => :ROCm,
-        Int32(DLPack.kDLROCMHost) => :ROCmHost,
-        Int32(DLPack.kDLMetal) => :Metal,
-        Int32(DLPack.kDLVulkan) => :Vulkan,
-        Int32(DLPack.kDLOpenCL) => :OpenCL,
-        Int32(DLPack.kDLOneAPI) => :oneAPI,
+        Int32(LibTVMFFI.kDLCPU) => :CPU,
+        Int32(LibTVMFFI.kDLCUDA) => :CUDA,
+        Int32(LibTVMFFI.kDLCUDAHost) => :CUDAHost,
+        Int32(LibTVMFFI.kDLCUDAManaged) => :CUDAManaged,
+        Int32(LibTVMFFI.kDLROCM) => :ROCm,
+        Int32(LibTVMFFI.kDLROCMHost) => :ROCmHost,
+        Int32(LibTVMFFI.kDLMetal) => :Metal,
+        Int32(LibTVMFFI.kDLVulkan) => :Vulkan,
+        Int32(LibTVMFFI.kDLOpenCL) => :OpenCL,
+        Int32(LibTVMFFI.kDLOneAPI) => :oneAPI
     )
     return get(type_map, Int32(device_type), :Unknown)
 end
+
+# ============================================================================
+# GPU Backend Detection
+# ============================================================================
 
 """
     supports_gpu_backend(backend::Symbol) -> Bool
 
 Check if a specific GPU backend is available.
-
-# Design Philosophy (Linus-style)
-Old code: Try to introspect Main module and call .functional()
-New code: Just check if the package exists in the current environment
-Simpler, no weird Main.CUDA hacks
 
 # Arguments
 - `backend::Symbol`: Backend to check (:CUDA, :ROCm, :Metal, :oneAPI)
@@ -120,8 +117,6 @@ end
 ```
 """
 function supports_gpu_backend(backend::Symbol)
-    # Check if the module is in the namespace by trying to get its const
-    # This is cleaner than isdefined(Main, :...)
     try
         if backend == :CUDA
             return isdefined(@__MODULE__, :CUDA) ||
@@ -137,7 +132,6 @@ function supports_gpu_backend(backend::Symbol)
                    Base.get_extension(@__MODULE__, :oneAPIExt) !== nothing
         end
     catch
-        # Fallback: just return false if extension system not available (Julia < 1.9)
         return false
     end
     return false
@@ -175,18 +169,6 @@ end
     print_gpu_info()
 
 Print information about available GPU backends and devices.
-
-# Examples
-```julia
-print_gpu_info()
-# Output:
-# Available GPU Backends:
-#   ✓ CUDA (NVIDIA)
-#     • Device 0: NVIDIA GeForce RTX 3090
-#     • Device 1: NVIDIA GeForce RTX 3080
-#   ✓ ROCm (AMD)
-#     • Device 0: AMD Radeon RX 6900 XT
-```
 """
 function print_gpu_info()
     println("Available GPU Backends:")
@@ -217,29 +199,22 @@ function print_gpu_info()
         end
 
         println("  ✓ $backend ($vendor)")
-
-        # Simplified: just report backend is available
-        # Device enumeration requires calling into the backend packages
-        # which we've intentionally avoided for simplicity
         println("    • Backend available (device enumeration requires importing package)")
     end
 end
 
 # ============================================================================
-# Internal Utilities
+# TensorView Constructor for Generic AbstractArray
 # ============================================================================
-# Note: _get_root_array is in utils.jl
-# Device detection uses DLPack.dldevice - no duplication!
 
-# Extend TensorView constructor to handle GPU arrays
 """
     TensorView(arr::AbstractArray)
 
 Construct a TensorView from any AbstractArray, including GPU arrays.
 
-# Design Philosophy (Linus-style)
+# Design Philosophy
 ONE constructor, ONE type, ALL devices.
-- Use DLPack.dldevice() for device detection (no duplication!)
+- Use dldevice() for device detection (extensible via package extensions)
 - Create appropriate device automatically
 - Return unified TensorView
 
@@ -258,10 +233,10 @@ gpu_view = TensorView(gpu_arr)     # Auto: CUDA device
 function TensorView(arr::S) where {S <: AbstractArray}
     T = eltype(arr)
 
-    # Auto-detect device using DLPack.dldevice (handles all GPU backends!)
-    device = _dlpack_to_tvm_device(arr)
+    # Auto-detect device using dldevice (handles all GPU backends!)
+    device = dldevice(arr)
 
-    # Get shape and strides - same as CPU
+    # Get shape and strides
     shape_vec = collect(Int64, size(arr))
     strides_vec = collect(Int64, Base.strides(arr))
 
@@ -278,7 +253,7 @@ function TensorView(arr::S) where {S <: AbstractArray}
     # Other GPU backends use byte_offset = 0
     byte_offset = UInt64(0)
     element_size = sizeof(T)
-    if device.device_type == Int32(DLPack.kDLMetal)
+    if device.device_type == Int32(LibTVMFFI.kDLMetal)
         arr_type = typeof(arr)
         if hasfield(arr_type, :offset)
             base_offset = arr.offset
@@ -310,8 +285,12 @@ function TensorView(arr::S) where {S <: AbstractArray}
         byte_offset
     )
 
-    return TensorView{T, S}(dltensor, shape_vec, strides_vec, arr)
+    return TensorView{T, S}(dltensor, shape_vec, strides_vec, arr, JuliaOwned)
 end
+
+# ============================================================================
+# GPU Array Info
+# ============================================================================
 
 """
     gpu_array_info(arr)
@@ -335,10 +314,10 @@ function gpu_array_info(arr)
     println("GPU Array Information:")
 
     try
-        # Get device info using DLPack
-        device = _dlpack_to_tvm_device(arr)
+        # Get device info
+        device = dldevice(arr)
         backend = _dldevice_type_to_symbol(device.device_type)
-        
+
         println("  Backend: $backend")
         println("  Device ID: $(device.device_id)")
         println("  Element Type: ", eltype(arr))

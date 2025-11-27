@@ -237,7 +237,7 @@ end
     view = TensorView(arr)
     any = TVMAny(view)
     @test TVMFFI.type_index(any) == Int32(LibTVMFFI.kTVMFFIDLTensorPtr)
-    
+
     # Note: can't use take_value for DLTensorPtr since we don't own the data
     # The view owns it
 end

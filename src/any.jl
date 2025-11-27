@@ -78,7 +78,9 @@ type_index(view::TVMAnyView) = view.data.type_index
 
 Check if the value is a reference-counted object.
 """
-is_object(view::TVMAnyView) = view.data.type_index >= Int32(LibTVMFFI.kTVMFFIStaticObjectBegin)
+function is_object(view::TVMAnyView)
+    view.data.type_index >= Int32(LibTVMFFI.kTVMFFIStaticObjectBegin)
+end
 
 """
     is_none(view::TVMAnyView) -> Bool
@@ -225,7 +227,7 @@ function copy_value end
 
 #=============================================================================
   Julia Value → TVMAny Constructors (Forward Declarations)
-  
+
   Implemented in conversion.jl after all types are defined.
 =============================================================================#
 
@@ -262,6 +264,33 @@ Get the raw TVMFFIAny data (internal use only).
 raw_data(any::TVMAny) = any.data
 
 """
+    transfer_ownership!(any::TVMAny) -> LibTVMFFI.TVMFFIAny
+
+Transfer ownership out of the TVMAny, returning the raw data.
+After this call, the finalizer will NOT DecRef (data is cleared for objects).
+
+Use this when passing values to C code that takes ownership,
+such as writing callback return values.
+
+# Example
+```julia
+# In callback return path:
+result_any = TVMAny(some_object)  # IncRef happened
+raw = transfer_ownership!(result_any)  # Prevents finalizer DecRef
+unsafe_store!(ret_ptr, raw)  # C now owns the reference
+# result_any finalizer runs but does nothing (data cleared)
+```
+"""
+function transfer_ownership!(any::TVMAny)
+    data = any.data
+    # Clear data for object types so finalizer won't DecRef
+    if data.type_index >= Int32(LibTVMFFI.kTVMFFIStaticObjectBegin)
+        any.data = LibTVMFFI.TVMFFIAny(Int32(LibTVMFFI.kTVMFFINone), 0, 0)
+    end
+    return data
+end
+
+"""
     raw_data(view::TVMAnyView) -> LibTVMFFI.TVMFFIAny
 
 Get the raw TVMFFIAny data (internal use only).
@@ -276,4 +305,3 @@ end
 function Base.show(io::IO, any::TVMAny)
     print(io, "TVMAny(type_index=", any.data.type_index, ")")
 end
-

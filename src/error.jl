@@ -141,7 +141,7 @@ function check_call(ret::Integer)
         # Retrieve error from thread-local storage
         error_handle = LibTVMFFI.TVMFFIErrorMoveFromRaised()
         if error_handle != C_NULL
-            throw(TVMError(error_handle; borrowed=false))
+            throw(TVMError(error_handle; borrowed = false))
         else
             # No error in TLS, but ret was non-zero
             error("TVM FFI call failed with code $ret but no error in TLS")

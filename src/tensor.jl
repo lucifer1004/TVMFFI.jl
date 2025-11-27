@@ -311,38 +311,63 @@ function Base.summary(io::IO, tensor::TVMTensor)
 end
 
 """
+    TensorOwnership
+
+Enum indicating who manages the underlying tensor data.
+
+- `JuliaOwned`: Julia GC manages the data (source is Array/CuArray)
+- `TVMOwned`: TVM refcount manages the data (no source, used internally)
+"""
+@enum TensorOwnership::Int8 begin
+    JuliaOwned = 0
+    TVMOwned = 1
+end
+
+"""
     TensorView{T, S}
 
-A view into a Julia array as a DLTensor, without owning the data.
+Lightweight DLTensor wrapper for Julia ↔ TVM tensor exchange.
 
-Wraps a DLTensor structure and manages the lifetime of shape/strides arrays.
-Works for both CPU and GPU arrays, including slices (SubArray).
+Used for:
+- Julia → TVM: Wrap Julia array as DLTensor for passing to TVM functions
+- Internal: Temporary view during `to_dlmanaged_tensor`
+
+# Type Parameters
+- `T`: Element type (Float32, Int64, etc.)
+- `S`: Source type (Array, CuArray, or Nothing)
 
 # Fields
 - `dltensor::DLTensor`: DLPack tensor structure
-- `shape::Vector{Int64}`: Shape array
-- `strides::Vector{Int64}`: Strides array
-- `source::S`: Source array (Array, CuArray, SubArray, etc.)
+- `shape::Vector{Int64}`: Shape array (kept alive for dltensor.shape pointer)
+- `strides::Vector{Int64}`: Strides array (kept alive for dltensor.strides pointer)
+- `source::S`: Source array (kept alive to prevent GC)
+- `ownership::TensorOwnership`: Who manages the underlying data
 
-# Examples
+# Example
 ```julia
-# From CPU array
 arr = rand(Float32, 3, 4)
-view = TensorView(arr)
-
-# From GPU array (requires CUDA.jl)
-# cu_arr = CUDA.rand(Float32, 3, 4)
-# view = TensorView(cu_arr)
+view = TensorView(arr)  # JuliaOwned, source = arr
 ```
 """
 mutable struct TensorView{T, S}
     dltensor::DLTensor
     shape::Vector{Int64}
     strides::Vector{Int64}
-    source::S  # Can be any array type (CPU or GPU)
+    source::S
+    ownership::TensorOwnership
+
+    function TensorView{T, S}(
+            dltensor::DLTensor,
+            shape::Vector{Int64},
+            strides::Vector{Int64},
+            source::S,
+            ownership::TensorOwnership
+    ) where {T, S}
+        new{T, S}(dltensor, shape, strides, source, ownership)
+    end
 end
 
-# Outer constructor for CPU arrays
+# Outer constructor for CPU arrays (JuliaOwned)
 function TensorView(
         arr::Union{Array{T}, SubArray{T}},
         device::DLDevice = cpu()
@@ -376,7 +401,7 @@ function TensorView(
         byte_offset
     )
 
-    return TensorView{T, typeof(arr)}(dltensor, shape_vec, strides_vec, arr)
+    return TensorView{T, typeof(arr)}(dltensor, shape_vec, strides_vec, arr, JuliaOwned)
 end
 
 """
@@ -404,3 +429,217 @@ type_index(tensor::TVMTensor) = LibTVMFFI.TVMFFIObjectGetTypeIndex(tensor.handle
 type_index(::Type{TVMTensor}) = Int32(LibTVMFFI.kTVMFFITensor)
 type_key(::Type{TVMTensor}) = "ffi.Tensor"
 
+#=============================================================================
+  DLManagedTensor - DLPack Protocol Structure
+=============================================================================#
+
+"""
+    DLManagedTensor
+
+DLPack protocol structure for tensor exchange between libraries.
+This is a C-compatible struct matching the DLPack specification.
+
+# Fields
+- `dl_tensor::DLTensor`: The tensor data
+- `manager_ctx::Ptr{Cvoid}`: Context for the deleter callback
+- `deleter::Ptr{Cvoid}`: Function pointer called when tensor is no longer needed
+"""
+mutable struct DLManagedTensor
+    dl_tensor::DLTensor
+    manager_ctx::Ptr{Cvoid}
+    deleter::Ptr{Cvoid}
+end
+
+#=============================================================================
+  TensorView from TVMTensor (TVMOwned)
+=============================================================================#
+
+"""
+    TensorView(tensor::TVMTensor) -> TensorView
+
+Create a TensorView from a TVMTensor (zero-copy).
+
+The TensorView holds a reference to the TVMTensor, keeping it alive.
+The underlying data is managed by TVM's reference counting.
+
+# Example
+```julia
+tvm_tensor = some_tvm_function()
+view = TensorView(tvm_tensor)
+# view.source === tvm_tensor (keeps it alive)
+```
+"""
+function TensorView(tensor::TVMTensor)
+    # Get DLTensor from TVMTensor
+    dltensor_ptr = get_dltensor_ptr(tensor)
+    dltensor = unsafe_load(dltensor_ptr)
+
+    # Extract type from dtype
+    T = dtype_to_julia_type(dltensor.dtype)
+
+    # Copy shape and strides (we need our own arrays for the pointers)
+    ndim = Int(dltensor.ndim)
+    shape_vec = if ndim > 0
+        unsafe_wrap(Array, dltensor.shape, ndim) |> copy
+    else
+        Int64[]
+    end
+
+    strides_vec = if dltensor.strides != C_NULL && ndim > 0
+        unsafe_wrap(Array, dltensor.strides, ndim) |> copy
+    else
+        # Compute default C-contiguous strides
+        _compute_contiguous_strides(shape_vec)
+    end
+
+    # Create new DLTensor with our shape/strides pointers
+    new_dltensor = DLTensor(
+        dltensor.data,
+        dltensor.device,
+        dltensor.ndim,
+        dltensor.dtype,
+        pointer(shape_vec),
+        pointer(strides_vec),
+        dltensor.byte_offset
+    )
+
+    return TensorView{T, TVMTensor}(new_dltensor, shape_vec, strides_vec, tensor, TVMOwned)
+end
+
+#=============================================================================
+  Helper Functions
+=============================================================================#
+
+"""
+Compute C-contiguous (row-major) strides from shape.
+"""
+function _compute_c_contiguous_strides(shape::Vector{Int64})
+    ndim = length(shape)
+    if ndim == 0
+        return Int64[]
+    end
+    strides = ones(Int64, ndim)
+    for i in (ndim - 1):-1:1
+        strides[i] = strides[i + 1] * shape[i + 1]
+    end
+    return strides
+end
+
+"""
+Compute F-contiguous (column-major, Julia-style) strides from shape.
+"""
+function _compute_f_contiguous_strides(shape::Vector{Int64})
+    ndim = length(shape)
+    if ndim == 0
+        return Int64[]
+    end
+    strides = ones(Int64, ndim)
+    for i in 2:ndim
+        strides[i] = strides[i - 1] * shape[i - 1]
+    end
+    return strides
+end
+
+# Alias for backward compatibility
+_compute_contiguous_strides(shape) = _compute_c_contiguous_strides(shape)
+
+"""
+    to_dlmanaged_tensor(view::TensorView) -> Ptr{DLManagedTensor}
+
+Create a DLManagedTensor from a TensorView for passing to external libraries.
+
+The caller is responsible for ensuring the TensorView stays alive while
+the DLManagedTensor is in use.
+
+# Returns
+Pointer to a DLManagedTensor (allocated in DLMANAGED_POOL)
+"""
+const _DLMANAGED_POOL = Dict{Ptr{Cvoid}, Any}()
+const _DLMANAGED_POOL_LOCK = ReentrantLock()
+
+# Flag to prevent operations during Julia shutdown
+# Shared across tensor.jl, dlpack.jl, and function.jl
+const _julia_is_exiting = Ref(false)
+
+function _dlmanaged_deleter(manager_ctx::Ptr{Cvoid})
+    # Skip if Julia is exiting - runtime may be in inconsistent state
+    _julia_is_exiting[] && return nothing
+
+    lock(_DLMANAGED_POOL_LOCK) do
+        delete!(_DLMANAGED_POOL, manager_ctx)
+    end
+    return nothing
+end
+
+const _DLMANAGED_DELETER_CPTR = Ref{Ptr{Cvoid}}(C_NULL)
+
+function _init_dlmanaged_deleter()
+    _DLMANAGED_DELETER_CPTR[] = @cfunction(_dlmanaged_deleter, Cvoid, (Ptr{Cvoid},))
+end
+
+function to_dlmanaged_tensor(view::TensorView)
+    # Create DLManagedTensor
+    dlmanaged = DLManagedTensor(
+        view.dltensor,
+        C_NULL,  # Will be set to pointer_from_objref
+        _DLMANAGED_DELETER_CPTR[]
+    )
+
+    # Get pointer and store in pool to keep view alive
+    dlmanaged_ptr = pointer_from_objref(dlmanaged)
+    dlmanaged.manager_ctx = dlmanaged_ptr
+
+    lock(_DLMANAGED_POOL_LOCK) do
+        _DLMANAGED_POOL[dlmanaged_ptr] = (dlmanaged, view, view.source)
+    end
+
+    return Ptr{DLManagedTensor}(dlmanaged_ptr)
+end
+
+#=============================================================================
+  Accessor Functions for TensorView
+=============================================================================#
+
+"""Get the element type of a TensorView."""
+Base.eltype(::TensorView{T, S}) where {T, S} = T
+
+"""Get the source type of a TensorView."""
+source_type(::TensorView{T, S}) where {T, S} = S
+
+"""Get the shape of a TensorView as a tuple."""
+Base.size(view::TensorView) = Tuple(view.shape)
+
+"""Get the number of dimensions."""
+Base.ndims(view::TensorView) = length(view.shape)
+
+"""Get the total number of elements."""
+Base.length(view::TensorView) = prod(view.shape)
+
+"""Get the device of a TensorView."""
+device(view::TensorView) = view.dltensor.device
+
+"""Get the dtype of a TensorView."""
+dtype(view::TensorView) = view.dltensor.dtype
+
+"""Check if the TensorView is contiguous (either C or F order)."""
+function is_contiguous(view::TensorView)
+    c_strides = _compute_c_contiguous_strides(view.shape)
+    f_strides = _compute_f_contiguous_strides(view.shape)
+    return view.strides == c_strides || view.strides == f_strides
+end
+
+"""Check if the TensorView is C-contiguous (row-major)."""
+function is_c_contiguous(view::TensorView)
+    return view.strides == _compute_c_contiguous_strides(view.shape)
+end
+
+"""Check if the TensorView is F-contiguous (column-major, Julia-style)."""
+function is_f_contiguous(view::TensorView)
+    return view.strides == _compute_f_contiguous_strides(view.shape)
+end
+
+"""Check if the TensorView is managed by Julia."""
+is_julia_owned(view::TensorView) = view.ownership == JuliaOwned
+
+"""Check if the TensorView is managed by TVM."""
+is_tvm_owned(view::TensorView) = view.ownership == TVMOwned
