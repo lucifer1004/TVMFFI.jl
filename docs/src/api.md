@@ -24,6 +24,7 @@ Core data structures for exchanging data with TVM.
 TVMTensor
 TensorView
 from_dlpack
+dldevice
 shape
 dtype
 device
