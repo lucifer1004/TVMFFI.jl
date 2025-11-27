@@ -140,9 +140,18 @@ end
 
 Get pointer to the underlying DLTensor structure.
 """
-function get_dltensor_ptr(tensor::TVMTensor)
+@inline function get_dltensor_ptr(handle::LibTVMFFI.TVMFFIObjectHandle)
     # DLTensor follows immediately after TVMFFIObject header
-    Ptr{DLTensor}(tensor.handle + sizeof(LibTVMFFI.TVMFFIObject))
+    Ptr{DLTensor}(handle + sizeof(LibTVMFFI.TVMFFIObject))
+end
+
+"""
+    get_dltensor_ptr(tensor::TVMTensor) -> Ptr{DLTensor}
+
+Get pointer to the underlying DLTensor structure.
+"""
+@inline function get_dltensor_ptr(tensor::TVMTensor)
+    get_dltensor_ptr(tensor.handle)
 end
 
 """

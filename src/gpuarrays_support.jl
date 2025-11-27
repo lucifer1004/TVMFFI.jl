@@ -279,8 +279,12 @@ function TensorView(arr::S) where {S <: AbstractArray}
         end
     end
 
+    # Convert pointer to Ptr{Cvoid} - handle both regular Ptr and GPU pointers (CuPtr, etc.)
+    # GPU pointers need conversion through UInt since they don't directly convert to Ptr{Cvoid}
+    data_ptr = Ptr{Cvoid}(UInt(arr_ptr))
+
     return TensorView{T, S, N}(
-        Ptr{Cvoid}(arr_ptr),
+        data_ptr,
         device,
         dt,
         shape_tuple,

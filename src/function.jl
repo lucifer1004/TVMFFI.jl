@@ -359,6 +359,47 @@ for i in 1:1000000
 end
 ```
 """
+# Specialized method for zero arguments (avoids Vector allocations)
+function (func::TVMFunction)()
+    result = Ref{LibTVMFFI.TVMFFIAny}(LibTVMFFI.TVMFFIAny(Int32(LibTVMFFI.kTVMFFINone), 0, 0))
+    
+    ret = LibTVMFFI.TVMFFIFunctionCall(
+        func.handle,
+        Ptr{LibTVMFFI.TVMFFIAny}(C_NULL),
+        Int32(0),
+        Base.unsafe_convert(Ptr{LibTVMFFI.TVMFFIAny}, result)
+    )
+    check_call(ret)
+    
+    result_owned = TVMAny(result[])
+    return take_value(result_owned)
+end
+
+# Specialized method for single non-array argument (common case: Int64, Float64)
+# Uses Ref instead of Vector to avoid allocation
+function (func::TVMFunction)(arg::Union{Number, Bool, Nothing, DLDevice, DLDataType, AbstractString})
+    any = TVMAny(arg)
+    raw = raw_data(any)
+    args_raw_ref = Ref(raw)
+    
+    result = Ref{LibTVMFFI.TVMFFIAny}(LibTVMFFI.TVMFFIAny(Int32(LibTVMFFI.kTVMFFINone), 0, 0))
+    
+    local ret
+    GC.@preserve any arg begin
+        ret = LibTVMFFI.TVMFFIFunctionCall(
+            func.handle,
+            Base.unsafe_convert(Ptr{LibTVMFFI.TVMFFIAny}, args_raw_ref),
+            Int32(1),
+            Base.unsafe_convert(Ptr{LibTVMFFI.TVMFFIAny}, result)
+        )
+    end
+    check_call(ret)
+    
+    result_owned = TVMAny(result[])
+    return take_value(result_owned)
+end
+
+# General method for one or more arguments
 function (func::TVMFunction)(args...)
     num_args = length(args)
 
@@ -452,9 +493,11 @@ function (func::TVMFunction)(args...)
             end
         elseif result_raw.type_index == Int32(LibTVMFFI.kTVMFFITensor)
             # GPU array: check TVMTensor's DLTensor data pointer
+            # Directly compute DLTensor pointer from handle to avoid TVMTensor allocation
             handle = reinterpret(LibTVMFFI.TVMFFIObjectHandle, result_raw.data)
             if handle != C_NULL
-                dltensor_ptr = get_dltensor_ptr(TVMTensor(handle; borrowed = true))
+                # DLTensor follows immediately after TVMFFIObject header
+                dltensor_ptr = get_dltensor_ptr(handle)
                 dltensor = unsafe_load(dltensor_ptr)
                 data_ptr = Ptr{Cvoid}(dltensor.data)
                 # Linear search - fast for small N, no allocation
