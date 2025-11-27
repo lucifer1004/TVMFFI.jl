@@ -362,13 +362,13 @@ end
 function (func::TVMFunction)(args...)
     num_args = length(args)
 
-    # Convert arguments to TVMAny
-    # Arrays need special handling - they return (any, view) tuples
-    # We also track array data pointers for identity optimization
-    args_any = Vector{TVMAny}(undef, num_args)
-    views = Vector{Any}(undef, num_args)  # Keep views alive
-    # Map: DLTensor data pointer → (index, original array)
-    tensor_ptr_to_arg = Dict{Ptr{Cvoid}, Tuple{Int, Any}}()
+    # Convert arguments directly to raw TVMFFIAny for C API
+    # gc_refs keeps TVMAny/TensorView/TVMTensor alive during call
+    args_raw = Vector{LibTVMFFI.TVMFFIAny}(undef, num_args)
+    gc_refs = Vector{Any}(undef, num_args)  # Keep TVMAny + views alive
+    # For identity optimization: track (data_ptr, original_array) pairs
+    # Use Vector instead of Dict - linear search is faster for small N and avoids allocation
+    tensor_ptrs = Vector{Tuple{Ptr{Cvoid}, Any}}()
 
     for (i, arg) in enumerate(args)
         if arg isa AbstractArray && !(arg isa TensorView)
@@ -378,40 +378,41 @@ function (func::TVMFunction)(args...)
             if device.device_type != Int32(LibTVMFFI.kDLCPU)
                 # GPU array - use TVMTensor for proper DLPack + refcounting
                 tensor = TVMTensor(arg)
-                args_any[i] = TVMAny(tensor)
-                views[i] = tensor  # Keep tensor alive
+                any = TVMAny(tensor)
+                args_raw[i] = raw_data(any)
+                gc_refs[i] = (any, tensor)  # Keep both alive
                 # Track data pointer for identity optimization
-                tensor_ptr_to_arg[Ptr{Cvoid}(UInt(pointer(arg)))] = (i, arg)
+                push!(tensor_ptrs, (Ptr{Cvoid}(UInt(pointer(arg))), arg))
             else
                 # CPU array - use TensorView for zero-copy
                 view = TensorView(arg)
-                args_any[i] = TVMAny(view)
-                views[i] = view  # Keep view alive
+                any = TVMAny(view)
+                args_raw[i] = raw_data(any)
+                gc_refs[i] = (any, view)  # Keep both alive
                 # Track data pointer for identity optimization
-                tensor_ptr_to_arg[view.dltensor.data] = (i, arg)
+                push!(tensor_ptrs, (view.dltensor.data, arg))
             end
         elseif arg isa TensorView
-            args_any[i] = TVMAny(arg)
-            views[i] = arg  # Keep view alive
+            any = TVMAny(arg)
+            args_raw[i] = raw_data(any)
+            gc_refs[i] = (any, arg)  # Keep both alive
             # Track TensorView data pointer too (source is the underlying array)
-            tensor_ptr_to_arg[arg.dltensor.data] = (i, arg.source)
+            push!(tensor_ptrs, (arg.dltensor.data, arg.source))
         else
-            args_any[i] = TVMAny(arg)
-            views[i] = nothing
+            any = TVMAny(arg)
+            args_raw[i] = raw_data(any)
+            gc_refs[i] = any
         end
     end
-
-    # Extract raw TVMFFIAny for C API
-    args_raw = [raw_data(a) for a in args_any]
 
     # Prepare result
     result = Ref{LibTVMFFI.TVMFFIAny}(LibTVMFFI.TVMFFIAny(Int32(LibTVMFFI.kTVMFFINone), 0, 0))
 
     # CRITICAL GC Safety:
-    # We must preserve args_any, views, AND args_raw during the C call
+    # We must preserve args, gc_refs, AND args_raw during the C call
     # args_raw holds the raw TVMFFIAny data passed to C
     local ret
-    GC.@preserve args args_any views args_raw begin
+    GC.@preserve args gc_refs args_raw begin
         ret = if num_args > 0
             LibTVMFFI.TVMFFIFunctionCall(
                 func.handle,
@@ -435,16 +436,18 @@ function (func::TVMFunction)(args...)
     # return the original array directly (zero-copy)
     result_raw = result[]
 
-    if !isempty(tensor_ptr_to_arg)
+    if !isempty(tensor_ptrs)
         if result_raw.type_index == Int32(LibTVMFFI.kTVMFFIDLTensorPtr)
             # CPU array: check DLTensor data pointer
             tensor_ptr = reinterpret(Ptr{DLTensor}, result_raw.data)
             if tensor_ptr != C_NULL
                 dltensor = unsafe_load(tensor_ptr)
                 data_ptr = Ptr{Cvoid}(dltensor.data)
-                if haskey(tensor_ptr_to_arg, data_ptr)
-                    _, original_arr = tensor_ptr_to_arg[data_ptr]
-                    return original_arr
+                # Linear search - fast for small N, no allocation
+                for (ptr, original_arr) in tensor_ptrs
+                    if ptr == data_ptr
+                        return original_arr
+                    end
                 end
             end
         elseif result_raw.type_index == Int32(LibTVMFFI.kTVMFFITensor)
@@ -454,12 +457,14 @@ function (func::TVMFunction)(args...)
                 dltensor_ptr = get_dltensor_ptr(TVMTensor(handle; borrowed = true))
                 dltensor = unsafe_load(dltensor_ptr)
                 data_ptr = Ptr{Cvoid}(dltensor.data)
-                if haskey(tensor_ptr_to_arg, data_ptr)
-                    # Result is same tensor as input - return original array
-                    # DecRef the returned handle since we won't use it
-                    LibTVMFFI.TVMFFIObjectDecRef(handle)
-                    _, original_arr = tensor_ptr_to_arg[data_ptr]
-                    return original_arr
+                # Linear search - fast for small N, no allocation
+                for (ptr, original_arr) in tensor_ptrs
+                    if ptr == data_ptr
+                        # Result is same tensor as input - return original array
+                        # DecRef the returned handle since we won't use it
+                        LibTVMFFI.TVMFFIObjectDecRef(handle)
+                        return original_arr
+                    end
                 end
             end
         end
