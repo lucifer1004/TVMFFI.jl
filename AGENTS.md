@@ -252,3 +252,110 @@ end
 核心思路：用 `Vector{Any}` + freelist 替代 Dict，暴露整数索引而非指针。
 
 **当前状态**：不需要实现。现有实现对全局函数注册足够高效。
+
+---
+
+## 性能优化记录
+
+### 成功的优化
+
+#### 1. TensorView NTuple 优化 (2024-11)
+
+**问题**：TensorView 的 `shape` 和 `strides` 使用 `Vector{Int64}`，每次创建都有堆分配。
+
+**解决方案**：
+- `TensorView{T, S}` → `TensorView{T, S, N}`，N 为维度数
+- `shape::Vector{Int64}` → `_shape::NTuple{N, Int64}`（内联存储）
+- `strides::Vector{Int64}` → `_strides::NTuple{N, Int64}`
+- DLTensor 的 shape/strides 指针通过 `pointer_from_objref + fieldoffset` 指向内联存储
+
+**效果**：每个 TensorView 节省 ~128 bytes
+
+**文件**：`tensor.jl`, `gpuarrays_support.jl`
+
+#### 2. FFI 调用路径优化 (2024-11)
+
+**问题**：`TVMFunction` 调用有多余的分配。
+
+**解决方案**：
+- 合并 `args_any` 到 `args_raw`：直接存储 `TVMFFIAny` 而非 `TVMAny` 包装
+- `Dict{Ptr, Tuple}` → `Vector{Tuple{Ptr, Any}}`：线性搜索对小 N 更高效且零分配
+
+**效果**：`func(Float32[64])` 从 1200B→688B（-43%），~461ns→~365ns（-21%）
+
+**文件**：`function.jl`
+
+---
+
+### 失败的优化尝试
+
+以下优化尝试未能改善性能，记录以避免重复：
+
+#### 1. safe_call 中的 ntuple ❌
+
+**尝试**：将 `julia_args` 和 `arg_raws` 从 `Vector` 改为 `ntuple`
+
+**结果**：内存减少但时间增加 30-50%
+
+**原因**：`ntuple(n) do i ... end` 对运行时 `n` 会触发动态编译，JIT 开销大于节省的分配
+
+**教训**：`ntuple` 只适合编译时已知 `N` 的情况
+
+#### 2. take_value_raw (if-elseif 链) ❌
+
+**尝试**：直接从 `TVMFFIAny` 提取 isbits 类型值，跳过 `TVMAny` 创建
+
+```julia
+function take_value_raw(raw)
+    type_idx == kTVMFFINone && return nothing
+    type_idx == kTVMFFIInt && return reinterpret(Int64, raw.data)
+    # ...
+    return take_value(TVMAny(raw))
+end
+```
+
+**结果**：`func(Int64)` 略快，但 `func()` 返回 `nothing` 时变慢 29%
+
+**原因**：if-elseif 分支开销在某些 JIT 场景下超过节省的分配
+
+#### 3. take_value_raw (Val dispatch) ❌
+
+**尝试**：用 Julia 类型分派 + `Val` 实现零开销分派
+
+```julia
+@inline _extract_by_type(::Val{kTVMFFINone}, raw) = nothing
+@inline _extract_by_type(::Val{kTVMFFIInt}, raw) = reinterpret(Int64, raw.data)
+# ...
+take_value_raw(raw) = _extract_by_type(Val(raw.type_index), raw)
+```
+
+**结果**：内存增加 32B，时间变慢
+
+**原因**：`Val(raw.type_index)` 在运行时创建 Val 实例需要堆分配
+
+**教训**：Val 分派只在类型参数是编译时常量时才是零开销
+
+#### 4. take_value_raw (函数表) ❌
+
+**尝试**：预生成提取函数表，用索引直接调用
+
+```julia
+const _EXTRACTOR_FUNCS = ntuple(128) do i
+    # 返回对应的提取函数
+end
+take_value_raw(raw) = _EXTRACTOR_FUNCS[raw.type_index + 1](raw)
+```
+
+**结果**：时间变慢，内存无变化
+
+**原因**：函数表的间接调用开销抵消了任何潜在收益
+
+---
+
+### 优化指南
+
+1. **测量优先**：始终用 `@allocated` 和 `@elapsed` 测量，避免凭感觉优化
+2. **JIT 信任**：Julia JIT 对简单代码优化很好，复杂的手动优化可能适得其反
+3. **编译时 vs 运行时**：`ntuple`、`Val` 等技巧只在编译时已知参数时有效
+4. **微基准 ≠ 宏基准**：单独测量时零分配，完整调用时可能不同
+5. **Profile.Allocs**：精确定位分配来源比猜测更有效
