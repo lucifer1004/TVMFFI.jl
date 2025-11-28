@@ -46,11 +46,19 @@ src/
 ├── dlpack.jl          # DLPack zero-copy exchange
 └── gpuarrays_support.jl  # GPU array support
 
+docs/
+├── src/
+│   ├── index.md        # Symlink to ../../README.md (single source of truth)
+│   └── api.md          # API reference documentation
+└── make.jl            # Documentation build configuration
+
 ext/
 ├── CUDAExt.jl         # NVIDIA CUDA support (device detection, sync callback, tensor view)
 ├── AMDGPUExt.jl       # AMD ROCm support
 └── MetalExt.jl        # Apple Metal support
 ```
+
+**Note**: `docs/src/index.md` is a symbolic link to `README.md` to maintain a single source of truth for documentation.
 
 ### Core Types
 

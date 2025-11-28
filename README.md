@@ -4,7 +4,7 @@
 [![Build Status](https://github.com/lucifer1004/TVMFFI.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/lucifer1004/TVMFFI.jl/actions/workflows/CI.yml?query=branch%3Amain)
 [![Coverage](https://codecov.io/gh/lucifer1004/TVMFFI.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/lucifer1004/TVMFFI.jl)
 
-Julia bindings for the TVM (TensorView Virtual Machine) FFI (Foreign Function Interface).
+Julia bindings for the TVM FFI (Foreign Function Interface).
 
 ## Features
 
@@ -232,23 +232,33 @@ TVMFFI/
 ├── src/
 │   ├── LibTVMFFI.jl          # Low-level C bindings
 │   ├── TVMFFI.jl             # Main module
+│   ├── any.jl                # TVMAny/TVMAnyView ownership containers
+│   ├── conversion.jl         # ABI boundary layer (to_tvm_any, take_value, copy_value)
 │   ├── device.jl             # Device abstractions
 │   ├── dtype.jl              # Data type handling
-│   ├── string.jl             # String/Bytes types
+│   ├── dlpack.jl             # DLPack zero-copy tensor exchange
 │   ├── error.jl              # Error handling
-│   ├── object.jl             # Object system
-│   ├── tensor.jl             # DLTensor support
 │   ├── function.jl           # Function calls & registration
 │   ├── gpuarrays_support.jl  # GPU array integration (via DLPack.jl)
-│   ├── dlpack.jl             # DLPack zero-copy tensor exchange
-│   └── module.jl             # Module loading
+│   ├── module.jl             # Module loading
+│   ├── object.jl             # Object system
+│   ├── string.jl             # String/Bytes types
+│   ├── tensor.jl             # DLTensor support
+│   └── utils.jl              # Utility functions
 ├── ext/                      # Package extensions
 │   ├── CUDAExt.jl            # NVIDIA CUDA support
 │   ├── AMDGPUExt.jl          # AMD ROCm support
 │   └── MetalExt.jl           # Apple Metal support
-├── test/
-│   └── runtests.jl           # Comprehensive test suite
-└── examples/                 # Usage examples
+├── test/                     # Comprehensive test suite
+├── docs/                     # Documentation
+├── examples/                 # Usage examples
+├── benchmarks/               # Performance benchmarks
+├── fixtures/                 # Test fixtures and build files
+├── build/                    # Build artifacts
+├── Project.toml              # Julia package configuration
+├── AGENTS.md                 # Agent guide (technical documentation)
+├── LICENSE                   # Apache 2.0 license
+└── README.md                 # This file
 ```
 
 ### GPU Support
