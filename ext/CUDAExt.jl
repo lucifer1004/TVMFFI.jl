@@ -101,6 +101,10 @@ function _wrap_cuda_dltensor(::Type{T}, data_ptr::Ptr{Cvoid}, shape::Vector{Int6
     end
 end
 
+function Base.Ptr{Cvoid}(cu_ptr::CUDA.CuPtr{T}) where {T}
+    Ptr{Cvoid}(UInt(cu_ptr))
+end
+
 # ============================================================================
 # GPU Tensor View (for callbacks, no owner)
 # ============================================================================

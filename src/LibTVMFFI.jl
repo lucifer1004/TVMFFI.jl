@@ -84,8 +84,8 @@ Data type code enum (Int, UInt, Float, etc.) matching DLPack specification.
     kDLInt = 0
     kDLUInt = 1
     kDLFloat = 2
-    kDLBfloat = 4
     kDLOpaqueHandle = 3
+    kDLBfloat = 4
     kDLComplex = 5
     kDLBool = 6
     kDLFloat8_e3m4 = 7

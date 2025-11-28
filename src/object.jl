@@ -264,10 +264,16 @@ function MethodInfo(info::LibTVMFFI.TVMFFIMethodInfo)
                unsafe_string(info.metadata.data, info.metadata.size)
 
     # Extract the method handle from TVMFFIAny
-    method_handle = reinterpret(LibTVMFFI.TVMFFIObjectHandle, info.method.data)
-    # IncRef because we're keeping a reference
-    if method_handle != C_NULL
-        LibTVMFFI.TVMFFIObjectIncRef(method_handle)
+    # Only valid if type_index indicates an object type (>= 64)
+    method_handle = if info.method.type_index >= LibTVMFFI.kTVMFFIStaticObjectBegin
+        handle = reinterpret(LibTVMFFI.TVMFFIObjectHandle, info.method.data)
+        # IncRef because we're keeping a reference
+        if handle != C_NULL
+            LibTVMFFI.TVMFFIObjectIncRef(handle)
+        end
+        handle
+    else
+        C_NULL
     end
 
     MethodInfo(
@@ -447,9 +453,9 @@ function _get_reflection_cache(T::Type)
 end
 
 """
-    @register_object type_key struct TypeName [<: ParentType] ... end
+    @register_object type_key TypeName
 
-Register a Julia struct as a TVM object type with automatic memory management.
+Register a Julia type as a TVM object type with automatic memory management.
 
 This macro generates:
 1. A mutable struct with a `handle` field for the TVM object handle
@@ -458,68 +464,28 @@ This macro generates:
 4. Type index methods for runtime type queries
 
 # Arguments
-- `type_key`: The TVM type key (e.g., "testing.MyObject")
-- The struct definition (fields are for documentation only; actual field access
-  requires TVM reflection API support in C++)
+- `type_key`: The TVM type key (e.g., "ffi.Module")
+- `TypeName`: The name for the Julia type
 
 # Examples
 
 ```julia
-# Basic usage - wrap existing TVM type
-@register_object "ffi.Module" struct Module end
-
-# With parent type annotation (for documentation)
-@register_object "testing.TestObject" struct TestObject <: TVMObjectBase
-    v_i64::Int64   # Field declaration (actual access via TVM)
-    v_f64::Float64
-end
+# Wrap existing TVM type
+@register_object "ffi.Module" Module
 
 # After registration, create instances from handles:
-obj = TestObject(handle; borrowed=false)  # Take ownership
-obj = TestObject(handle; borrowed=true)   # Copy reference
+obj = Module(handle; borrowed=false)  # Take ownership
+obj = Module(handle; borrowed=true)   # Copy reference
 ```
 
 # Notes
 - The type key must be registered on the C++ side first
-- Field declarations are informational; actual field access depends on
-  TVM's reflection API being available for that type
 - For types with `__ffi_init__`, use `ffi_init(T, args...)` or `T(args...)` to create instances
 
 See also: [`register_object`](@ref), [`get_type_index`](@ref), [`type_index`](@ref)
 """
-macro register_object(type_key, struct_def)
-    # Parse the struct definition
-    if !Meta.isexpr(struct_def, :struct)
-        error("@register_object expects a struct definition")
-    end
-
-    is_mutable = struct_def.args[1]
-    type_expr = struct_def.args[2]
-    body = struct_def.args[3]
-
-    # Extract type name and parent type
-    local type_name, parent_type
-    if Meta.isexpr(type_expr, :<:)
-        type_name = type_expr.args[1]
-        parent_type = type_expr.args[2]
-    else
-        type_name = type_expr
-        parent_type = nothing
-    end
-
-    # Extract field declarations from body (for documentation/future use)
-    field_decls = []
-    for expr in body.args
-        if expr isa LineNumberNode
-            continue
-        elseif Meta.isexpr(expr, :(::))
-            push!(field_decls, (name = expr.args[1], type = expr.args[2]))
-        elseif expr isa Symbol
-            push!(field_decls, (name = expr, type = :Any))
-        end
-    end
-
-    type_key_str = type_key  # Save for use in generated code
+macro register_object(type_key, type_name)
+    type_name_str = string(type_name)  # Convert to string at macro expansion time
 
     # Generate the struct and registration code
     quote
@@ -528,9 +494,9 @@ macro register_object(type_key, struct_def)
             handle::LibTVMFFI.TVMFFIObjectHandle
 
             """
-                $($(string(type_name)))(handle; borrowed)
+                $($type_name_str)(handle; borrowed)
 
-            Create a $($(string(type_name))) from a raw handle.
+            Create a $($type_name_str) from a raw handle.
 
             # Arguments
             - `handle`: The raw TVM object handle
@@ -543,7 +509,7 @@ macro register_object(type_key, struct_def)
                     borrowed::Bool
             )
                 if handle == C_NULL
-                    error("Cannot create " * $(string(type_name)) * " from NULL handle")
+                    error("Cannot create " * $type_name_str * " from NULL handle")
                 end
 
                 # Copy reference if borrowed
@@ -594,7 +560,7 @@ macro register_object(type_key, struct_def)
 
         # Show method
         function Base.show(io::IO, obj::$(esc(type_name)))
-            print(io, $(string(type_name)), "(type_index=", TVMFFI.type_index(obj), ")")
+            print(io, $type_name_str, "(type_index=", TVMFFI.type_index(obj), ")")
         end
 
         # Reflection-based property access using global cache
@@ -629,7 +595,7 @@ macro register_object(type_key, struct_def)
                 end
             end
 
-            error("$($(string(type_name))) has no property '$name'")
+            error("$($type_name_str) has no property '$name'")
         end
 
         function Base.setproperty!(obj::$(esc(type_name)), name::Symbol, value)
@@ -647,7 +613,7 @@ macro register_object(type_key, struct_def)
                 end
             end
 
-            error("$($(string(type_name))) has no property '$name'")
+            error("$($type_name_str) has no property '$name'")
         end
 
         function Base.propertynames(obj::$(esc(type_name)), private::Bool = false)
@@ -671,8 +637,8 @@ macro register_object(type_key, struct_def)
         # This allows TypeName(arg1, arg2, ...) if __ffi_init__ exists
         function (::Type{$(esc(type_name))})(args...; kwargs...)
             if !has_ffi_init($(esc(type_name)))
-                error("$($(string(type_name))) does not have a __ffi_init__ constructor. " *
-                      "Use $($(string(type_name)))(handle; borrowed=...) instead.")
+                error("$($type_name_str) does not have a __ffi_init__ constructor. " *
+                      "Use $($type_name_str)(handle; borrowed=...) instead.")
             end
             return ffi_init($(esc(type_name)), args...; kwargs...)
         end
@@ -729,7 +695,7 @@ Create an instance of T using its __ffi_init__ method.
 
 # Example
 ```julia
-@register_object "testing.MyClass" struct MyClass end
+@register_object "testing.MyClass" MyClass
 
 # If MyClass has __ffi_init__(v_i64, v_f64), you can call:
 obj = ffi_init(MyClass, 42, 3.14)

@@ -26,7 +26,7 @@ end
 
 @testset "@register_object Macro" begin
     # Test the macro with a simple type
-    @register_object "julia.test.MacroTest1" struct MacroTest1 end
+    @register_object "julia.test.MacroTest1" MacroTest1
 
     # The type should be defined and registered
     @test isdefined(@__MODULE__, :MacroTest1)
@@ -37,24 +37,13 @@ end
     # Type key should be correct
     @test type_key(MacroTest1) == "julia.test.MacroTest1"
 
-    # Test with field declarations (informational)
-    @register_object "julia.test.MacroTest2" struct MacroTest2
-        x::Int64
-        y::Float64
-    end
+    # Test registering another type
+    @register_object "julia.test.MacroTest2" MacroTest2
 
     @test isdefined(@__MODULE__, :MacroTest2)
     @test type_index(MacroTest2) > 0
     @test type_key(MacroTest2) == "julia.test.MacroTest2"
     @test type_index(MacroTest1) != type_index(MacroTest2)
-
-    # Test with parent type annotation (for documentation purposes)
-    @register_object "julia.test.MacroTest3" struct MacroTest3 <: Any
-        value::String
-    end
-
-    @test isdefined(@__MODULE__, :MacroTest3)
-    @test type_index(MacroTest3) > 0
 end
 
 @testset "@register_object_simple Macro" begin
@@ -147,7 +136,7 @@ end
 
 @testset "Real TVM Type: testing.TestObjectBase" begin
     # Register the type with @register_object macro
-    @register_object "testing.TestObjectBase" struct TestObjectBase end
+    @register_object "testing.TestObjectBase" TestObjectBase
 
     # Check type registration
     @test type_index(TestObjectBase) > 0
@@ -171,7 +160,7 @@ end
 
 @testset "Field Setter with TestCxxClassBase" begin
     # Use TestCxxClassBase which has __ffi_init__ and writable fields
-    @register_object "testing.TestCxxClassBase" struct TestCxxClassBase end
+    @register_object "testing.TestCxxClassBase" TestCxxClassBase
 
     @test has_ffi_init(TestCxxClassBase)
 
@@ -192,7 +181,7 @@ end
 
 @testset "@register_object with Reflection" begin
     # Test that registered types can use reflection-based property access
-    @register_object "julia.test.ReflectionTest" struct ReflectionTest end
+    @register_object "julia.test.ReflectionTest" ReflectionTest
 
     # The type should be registered
     @test isdefined(@__MODULE__, :ReflectionTest)

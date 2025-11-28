@@ -120,7 +120,7 @@ result = func(Int64(10), Int64(20))  # Returns 30
 
 ```julia
 # Register a TVM type for use in Julia
-@register_object "testing.TestCxxClassBase" struct TestCxxClassBase end
+@register_object "testing.TestCxxClassBase" TestCxxClassBase
 
 # Create instances (if the type has __ffi_init__)
 obj = TestCxxClassBase(Int64(42), Int32(10))
