@@ -218,8 +218,7 @@ end
 """
 Copy strided data to contiguous array.
 """
-function _copy_strided_data(::Type{T}, data_ptr::Ptr{Cvoid}, shape::Vector{Int64},
-        strides::Vector{Int64}) where {T}
+function _copy_strided_data(::Type{T}, data_ptr::Ptr{Cvoid}, shape, strides) where {T}
     result = Array{T}(undef, Tuple(shape)...)
     _copy_strided!(result, Ptr{T}(data_ptr), shape, strides)
     return result
@@ -351,8 +350,7 @@ end
 """
 Copy data from strided memory to contiguous array.
 """
-function _copy_strided!(dst::Array{T}, src_ptr::Ptr{T}, shape::Vector{Int64},
-        strides::Vector{Int64}) where {T}
+function _copy_strided!(dst::Array{T}, src_ptr::Ptr{T}, shape, strides) where {T}
     ndim = length(shape)
 
     if ndim == 1
@@ -375,8 +373,7 @@ function _copy_strided!(dst::Array{T}, src_ptr::Ptr{T}, shape::Vector{Int64},
 end
 
 function _copy_strided_recursive!(dst::Array{T}, src_ptr::Ptr{T},
-        shape::Vector{Int64}, strides::Vector{Int64},
-        dim::Int, src_offset::Int) where {T}
+        shape, strides, dim::Int, src_offset::Int) where {T}
     if dim == length(shape)
         # Last dimension: copy elements
         for i in 1:shape[dim]

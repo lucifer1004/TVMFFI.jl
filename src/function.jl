@@ -645,63 +645,52 @@ with `unsafe_wrap` like CPU arrays.
 function _wrap_dltensor_view(tensor_ptr::Ptr{DLTensor})
     dltensor = unsafe_load(tensor_ptr)
 
-    # Check device type - only CPU supports zero-copy unsafe_wrap
+    # Only support CPU tensors here; GPU tensors are handled upstream.
     device_type = dltensor.device.device_type
-    if device_type != Int32(LibTVMFFI.kDLCPU)
-        # GPU device - cannot use unsafe_wrap, return nothing to signal fallback
-        return nothing
-    end
+    device_type != Int32(LibTVMFFI.kDLCPU) && return nothing
 
-    # Get element type
     T = dtype_to_julia_type(dltensor.dtype)
-
-    # Get shape
     ndim = Int(dltensor.ndim)
-    shape = ntuple(i -> Int(unsafe_load(dltensor.shape, i)), ndim)
-
-    # Create array view (zero-copy)
-    data_ptr = Ptr{T}(dltensor.data)
-
-    # Check if contiguous (strides == NULL means C-contiguous)
-    if dltensor.strides == C_NULL
-        # C-contiguous - can use simple unsafe_wrap
-        if ndim == 1
-            return unsafe_wrap(Array, data_ptr, shape[1])
-        else
-            # Multi-dim: need to handle row-major to column-major conversion
-            total = prod(shape)
-            flat = unsafe_wrap(Array, data_ptr, total)
-            return reshape(flat, reverse(shape)...)
-        end
+    shape_tuple = ndim > 0 ? ntuple(i -> Int(unsafe_load(dltensor.shape, i)), ndim) : ()
+    strides_tuple = if dltensor.strides == C_NULL || ndim == 0
+        nothing
     else
-        # Has explicit strides - check if actually contiguous
-        strides = ntuple(i -> Int(unsafe_load(dltensor.strides, i)), ndim)
+        ntuple(i -> Int(unsafe_load(dltensor.strides, i)), ndim)
+    end
 
-        # Check for F-contiguous (column-major, stride[1]=1)
-        is_f_contiguous = ndim == 0 || (strides[1] == 1 &&
-                           all(i -> strides[i] == strides[i - 1] * shape[i - 1], 2:ndim))
+    data_ptr = Ptr{UInt8}(dltensor.data) + dltensor.byte_offset
+    typed_ptr = Ptr{T}(data_ptr)
 
-        # Check for C-contiguous (row-major, stride[end]=1)
-        is_c_contiguous = ndim == 0 || (strides[end] == 1 &&
-                           all(
-            i -> strides[i] == strides[i + 1] * shape[i + 1], 1:(ndim - 1)))
+    # 0-D tensors -> reshape a scalar buffer entry
+    if ndim == 0
+        scalar = unsafe_wrap(Array, typed_ptr, 1)
+        return reshape(scalar, ())
+    end
 
-        if is_f_contiguous && ndim == 1
-            # 1D F-contiguous with stride=1 - can use unsafe_wrap
-            return unsafe_wrap(Array, data_ptr, shape[1])
-        elseif is_f_contiguous
-            # Multi-dim F-contiguous - can use unsafe_wrap with reshape
-            total = prod(shape)
-            flat = unsafe_wrap(Array, data_ptr, total)
-            return reshape(flat, shape...)
-        else
-            # Non-contiguous - must copy with strides
-            result = Array{T}(undef, shape...)
-            _copy_strided!(
-                result, data_ptr, collect(Int64.(shape)), collect(Int64.(strides)))
-            return result
+    # 1-D tensors only skip copy if contiguous.
+    if ndim == 1
+        stride1 = strides_tuple === nothing ? 1 : strides_tuple[1]
+        if stride1 == 1
+            return unsafe_wrap(Array, typed_ptr, shape_tuple[1])
         end
     end
+
+    if strides_tuple !== nothing
+        f_strides = _compute_f_contiguous_strides(shape_tuple)
+        if strides_tuple == f_strides
+            return unsafe_wrap(Array, typed_ptr, Tuple(shape_tuple))
+        end
+    end
+
+    # Layout mismatch (e.g., row-major) or arbitrary strided tensor → copy.
+    shape_vec = collect(Int64.(shape_tuple))
+    strides_vec = if strides_tuple === nothing
+        _compute_c_contiguous_strides(shape_vec)
+    else
+        collect(Int64.(strides_tuple))
+    end
+
+    return _copy_strided_data(T, Ptr{Cvoid}(data_ptr), shape_vec, strides_vec)
 end
 
 """

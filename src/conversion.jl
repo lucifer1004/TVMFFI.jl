@@ -465,29 +465,3 @@ function _compute_c_strides(shape)
     end
     return strides
 end
-
-"""
-Copy data with arbitrary strides.
-Handles both C-order (row-major) and Fortran-order (column-major) correctly.
-"""
-function _copy_strided!(dst::Array{T}, src_ptr::Ptr{T}, shape, strides_elem) where {T}
-    ndim = length(shape)
-    indices = ones(Int, ndim)
-    total = prod(shape)
-
-    for linear_idx in 1:total
-        # Compute source offset using strides
-        src_offset = sum((indices[i] - 1) * strides_elem[i] for i in 1:ndim)
-        dst[linear_idx] = unsafe_load(src_ptr, src_offset + 1)
-
-        # Increment indices (column-major for Julia)
-        for d in 1:ndim
-            if indices[d] < shape[d]
-                indices[d] += 1
-                break
-            else
-                indices[d] = 1
-            end
-        end
-    end
-end
